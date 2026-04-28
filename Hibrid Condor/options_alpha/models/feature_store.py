@@ -63,14 +63,26 @@ def build_features(
         strike = _safe_float(row.get("strike"))
         bid_val = _safe_float(row.get("bid"))
         ask_val = _safe_float(row.get("ask"))
+        theor_val = _safe_float(row.get("theoretical_price"))
         option_type = str(row.get("type", "call")).lower()
 
         if underlying_price <= 0 or strike <= 0:
             continue
-        if bid_val <= 0 or ask_val <= 0 or ask_val < bid_val:
+
+        # Источник mid (приоритетом):
+        #   1) theoretical_price из Excel (столбец "Теор. цена")
+        #   2) (bid + ask) / 2  — если обе стороны > 0 и ask >= bid
+        # Без одного из источников — строку пропускаем.
+        has_quotes = bid_val > 0 and ask_val > 0 and ask_val >= bid_val
+        if theor_val > 0:
+            mid = theor_val
+            mid_source = "theoretical"
+        elif has_quotes:
+            mid = (bid_val + ask_val) / 2.0
+            mid_source = "bid_ask"
+        else:
             continue
 
-        mid = (bid_val + ask_val) / 2.0
         if mid <= 0:
             continue
 
@@ -98,15 +110,19 @@ def build_features(
         )
 
         mispricing = fair["fair_value"] - mid
-        # Edge с учётом стороны сделки и спреда
-        if fair["fair_value"] > ask_val:
-            # Покупаем по ask, продаём по fair
+        # Edge с учётом стороны сделки и спреда.
+        # Если есть реальный стакан (bid/ask) — используем его.
+        # Иначе (только теор. цена) edge равен миспрайсингу без учёта спреда.
+        if has_quotes and fair["fair_value"] > ask_val:
             edge = fair["fair_value"] - ask_val
             side = "buy"
-        elif fair["fair_value"] < bid_val:
-            # Шортим по bid, откупаем по fair
+        elif has_quotes and fair["fair_value"] < bid_val:
             edge = bid_val - fair["fair_value"]
             side = "sell"
+        elif not has_quotes and abs(mispricing) > 0:
+            # Без стакана: side по знаку миспрайсинга, edge = |mispricing|
+            edge = abs(mispricing)
+            side = "buy" if mispricing > 0 else "sell"
         else:
             edge = 0.0
             side = "neutral"
@@ -116,7 +132,7 @@ def build_features(
         except ValueError:
             moneyness = 0.0
 
-        bid_ask_spread_pct = (ask_val - bid_val) / mid if mid > 0 else 0.0
+        bid_ask_spread_pct = (ask_val - bid_val) / mid if (has_quotes and mid > 0) else 0.0
 
         rows.append(
             {
@@ -143,6 +159,7 @@ def build_features(
                 "bid_ask_spread_pct": bid_ask_spread_pct,
                 "open_interest": _safe_float(row.get("open_interest", 0)),
                 "daily_volume": _safe_float(row.get("volume", 0)),
+                "mid_source": mid_source,
                 # Плейсхолдеры — заполняются на этапе обучения / инференса
                 "iv_rank": 0.5,
                 "iv_skew": 0.0,

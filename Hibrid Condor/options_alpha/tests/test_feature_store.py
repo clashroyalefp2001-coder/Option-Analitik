@@ -81,5 +81,85 @@ class TestFeatureStore(unittest.TestCase):
             self.assertEqual(row['side'], 'neutral')
 
 
+    def test_theoretical_price_used_as_mid(self):
+        """Если theoretical_price есть и > 0 — она используется как mid (вместо bid/ask)."""
+        obs_date = pd.Timestamp('2024-01-01')
+        expiry = obs_date + pd.Timedelta(days=180)
+        options = pd.DataFrame({
+            'date': [obs_date],
+            'strike': [100.0],
+            'bid': [5.0],
+            'ask': [5.2],
+            'theoretical_price': [7.5],   # расходится с (bid+ask)/2 = 5.1
+            'expiry': [expiry],
+            'type': ['call'],
+            'underlying_price': [100.0],
+        })
+        features = build_features(pd.DataFrame(), options)
+        self.assertEqual(len(features), 1)
+        self.assertAlmostEqual(features['mid'].iloc[0], 7.5, places=6)
+        self.assertEqual(features['mid_source'].iloc[0], 'theoretical')
+
+    def test_falls_back_to_bid_ask_when_no_theoretical(self):
+        """Без theoretical_price — старая логика через (bid+ask)/2."""
+        obs_date = pd.Timestamp('2024-01-01')
+        expiry = obs_date + pd.Timedelta(days=180)
+        options = pd.DataFrame({
+            'date': [obs_date],
+            'strike': [100.0],
+            'bid': [5.0],
+            'ask': [5.2],
+            'expiry': [expiry],
+            'type': ['call'],
+            'underlying_price': [100.0],
+        })
+        features = build_features(pd.DataFrame(), options)
+        self.assertEqual(len(features), 1)
+        self.assertAlmostEqual(features['mid'].iloc[0], 5.1, places=6)
+        self.assertEqual(features['mid_source'].iloc[0], 'bid_ask')
+
+    def test_no_quotes_but_theoretical_still_works(self):
+        """Нет bid/ask, но есть theoretical_price — строка не выкидывается."""
+        obs_date = pd.Timestamp('2024-01-01')
+        expiry = obs_date + pd.Timedelta(days=180)
+        options = pd.DataFrame({
+            'date': [obs_date],
+            'strike': [100.0],
+            'bid': [0.0],
+            'ask': [0.0],
+            'theoretical_price': [6.0],
+            'expiry': [expiry],
+            'type': ['call'],
+            'underlying_price': [100.0],
+        })
+        features = build_features(pd.DataFrame(), options)
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features['mid_source'].iloc[0], 'theoretical')
+        # bid_ask_spread_pct = 0, потому что стакана нет
+        self.assertEqual(features['bid_ask_spread_pct'].iloc[0], 0.0)
+
+    def test_multiple_expirations_have_different_T(self):
+        """Разные экспирации в одном файле — каждая считается со своим days_to_expiry."""
+        obs_date = pd.Timestamp('2024-01-01')
+        options = pd.DataFrame({
+            'date': [obs_date, obs_date, obs_date],
+            'strike': [100.0, 100.0, 100.0],
+            'bid': [5.0, 5.0, 5.0],
+            'ask': [5.2, 5.2, 5.2],
+            'expiry': [
+                obs_date + pd.Timedelta(days=7),
+                obs_date + pd.Timedelta(days=30),
+                obs_date + pd.Timedelta(days=180),
+            ],
+            'type': ['call', 'call', 'call'],
+            'underlying_price': [100.0, 100.0, 100.0],
+        })
+        features = build_features(pd.DataFrame(), options).sort_values('days_to_expiry').reset_index(drop=True)
+        self.assertEqual(len(features), 3)
+        self.assertEqual(list(features['days_to_expiry']), [7, 30, 180])
+        # Более дальняя экспирация — больше справедливая цена для ATM call
+        self.assertLess(features['fair_value'].iloc[0], features['fair_value'].iloc[2])
+
+
 if __name__ == '__main__':
     unittest.main()
