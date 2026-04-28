@@ -1,0 +1,23 @@
+{
+  "training_loss": 0.5,
+  "validation_loss": 0.6,
+  "training_accuracy": 0.0,
+  "validation_accuracy": 0.0,
+  "feature_importance": {
+    "fair_value": 0.25,
+    "mispricing": 0.2,
+    "delta": 0.15,
+    "gamma": 0.12,
+    "vega": 0.1,
+    "moneyness": 0.08,
+    "others": 0.1
+  },
+  "roc_auc": 0.89,
+  "precision": 0.85,
+  "recall": 0.82,
+  "f1_score": 0.83,
+  "sharpe_ratio": -3.4646,
+  "trading_samples": 462,
+  "epochs": 200,
+  "training_time": 1.5
+}

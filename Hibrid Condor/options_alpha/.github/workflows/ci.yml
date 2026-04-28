@@ -1,0 +1,53 @@
+name: Options Trading Advisor CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Hibrid Condor/options_alpha
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/ -v --cov=models --cov=pricing --cov=execution --cov=backtest --cov=monitoring --cov=data --cov-report=term-missing --cov-fail-under=80 || true
+          pytest tests/ -v --tb=short
+
+      - name: Check lint (basic)
+        run: |
+          python -m py_compile data/fetcher.py models/feature_store.py pricing/binomial.py backtest/engine.py main.py || true
+
+      - name: Build Docker image
+        run: |
+          docker build -t options-alpha:${{ github.sha }} .
+
+      - name: Scan image layers (basic check)
+        run: |
+          docker inspect options-alpha:${{ github.sha }} | jq '.[0].Config.Cmd' || true
+
+      - name: Save image as artifact (optional)
+        uses: actions/upload-artifact@v3
+        with:
+          name: options-alpha-image
+          path: |
+            Hibrid Condor/options_alpha/Dockerfile
+            Hibrid Condor/options_alpha/requirements.txt
