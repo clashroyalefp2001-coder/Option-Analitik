@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body { @apply bg-bg-0 text-text-1 font-sans; font-size: 14px; line-height: 1.5; }
+  *, *::before, *::after { box-sizing: border-box; }
+  ::selection { background: rgba(59,130,246,0.32); }
+  /* Скроллбар */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2D3548; border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a445c; }
+}
+
+@layer components {
+  .num { font-family: theme('fontFamily.mono'); font-variant-numeric: tabular-nums; }
+  .card { @apply bg-bg-1 border border-border rounded-lg p-6; }
+  .card-title { @apply text-sm font-semibold text-text-1 flex items-center gap-2; }
+  .input {
+    @apply bg-bg-2 border border-border text-text-1 rounded-sm px-3 py-2 text-sm;
+    @apply focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-1.5 rounded-sm border border-border bg-bg-2 text-text-1 text-sm font-medium transition-colors hover:bg-border;
+  }
+  .btn-primary { @apply bg-brand border-brand text-white hover:bg-brand-2 hover:border-brand-2; }
+  .btn-ghost { @apply bg-transparent border-transparent text-text-2 hover:bg-bg-1 hover:text-text-1; }
+  .kbd {
+    font-family: theme('fontFamily.mono'); font-size: 11px;
+    @apply ml-2 px-1.5 py-0.5 rounded bg-black/25 opacity-75;
+  }
+  .badge { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium; }
+  .badge-buy   { @apply bg-success/10 text-success; }
+  .badge-sell  { @apply bg-danger/10 text-danger; }
+  .badge-call  { @apply bg-brand/15 text-brand-2; }
+  .badge-put   { @apply bg-warning/15 text-warning; }
+  .badge-neu   { @apply bg-text-2/10 text-text-2; }
+}
