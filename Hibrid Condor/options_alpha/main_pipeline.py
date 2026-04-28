@@ -19,8 +19,23 @@ import json
 import logging
 import os
 import sys
+import warnings
 from datetime import datetime
 from typing import Any, Dict
+
+# Подавляем шумные pandas FutureWarning (ChainedAssignmentError) и UserWarning по dayfirst.
+# Они косметические и забивают логи пайплайна в UI. В тестах (pytest)
+# фильтр не влияет — там видно всё как было.
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=r".*ChainedAssignmentError.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message=r".*Parsing dates in.*format when dayfirst.*",
+)
 
 import pandas as pd
 
