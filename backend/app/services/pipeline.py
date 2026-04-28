@@ -187,6 +187,15 @@ async def run_pipeline_subprocess(
             step="done" if rc == 0 else "error",
         )
         return rc
+    except Exception:
+        # Гарантируем, что флаг running сбрасывается даже при исключении
+        _RUN_STATE.update(
+            running=False,
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            step="error",
+            exit_code=-1,
+        )
+        raise
     finally:
         log_file.close()
 
