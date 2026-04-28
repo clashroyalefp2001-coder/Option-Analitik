@@ -70,7 +70,7 @@ def run_pipeline(
         from execution.filters.hard import apply_hard_filters
         from execution.filters.soft import apply_soft_filters
         from execution.sizer.kelly import fractional_kelly
-        from backtest.engine import BacktestEngine
+        from backtest.engine import OptionBacktestEngine
         from monitoring.metrics import compute_kpis, ModelMetrics
         from config import RISK_CONFIG
     except Exception as exc:
@@ -202,10 +202,23 @@ def run_pipeline(
         log.exception("Ошибка расчёта размеров: %s", exc)
         return 1
 
-    # 7. Бэктест
+    # 7. Бэктест (реалистичный — с GBM-симуляцией базового актива и
+    # ежедневной переоценкой опционов биномиальной моделью)
     try:
         log.info("[7/7] Бэктест")
-        engine = BacktestEngine()
+        bt_cfg = config.get("BACKTEST_CONFIG", {}) or {}
+        engine = OptionBacktestEngine(
+            initial_capital=float(bt_cfg.get("initial_capital", 1_000_000)),
+            realized_vol=float(bt_cfg.get("realized_vol", 0.20)),
+            n_simulations=int(bt_cfg.get("n_simulations", 100)),
+            seed=bt_cfg.get("seed", 42),
+            r=float(bt_cfg.get("r", 0.04)),
+            dividend=float(bt_cfg.get("dividend", 0.0)),
+            sigma_for_pricing=bt_cfg.get("sigma_for_pricing"),
+            stop_loss_pct=bt_cfg.get("stop_loss_pct", 0.5),
+            take_profit_pct=bt_cfg.get("take_profit_pct", 1.0),
+            binomial_steps=int(bt_cfg.get("binomial_steps", 30)),
+        )
         engine.run(after_soft, sizes_series)
         equity_curve = engine.get_equity_curve()
         trades = engine.get_trades()
