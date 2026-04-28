@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -125,13 +127,84 @@ def read_options_board(limit: int | None = None) -> list[dict[str, Any]]:
                 pass
 
 
+def _classify_step(line: str) -> str | None:
+    """Определяет текущий шаг пайплайна по тексту лога."""
+    if "[1/7]" in line: return "data"
+    if "[2/7]" in line: return "features"
+    if "[3/7]" in line: return "training"
+    if "[4/7]" in line: return "inference"
+    if "[5/7]" in line: return "filters"
+    if "[6/7]" in line: return "sizing"
+    if "[7/7]" in line: return "backtest"
+    return None
+
+
+def _run_pipeline_blocking(
+    args: list[str],
+    cwd: str,
+    log_file_path: Path,
+    on_line=None,
+) -> int:
+    """Синхронный запуск subprocess'а со стримингом stdout по строкам.
+
+    Использует subprocess.Popen вместо asyncio.create_subprocess_exec,
+    чтобы работать независимо от типа event loop. uvicorn на Windows
+    в режиме --reload форсирует SelectorEventLoop, который не умеет
+    subprocess_exec → NotImplementedError. Popen в потоке работает всегда.
+    """
+    with log_file_path.open("w", encoding="utf-8") as log_file:
+        # На Windows нужен CREATE_NO_WINDOW, чтобы не открывалось окно консоли.
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        proc = subprocess.Popen(
+            args,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,  # line-buffered
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+        )
+
+        assert proc.stdout is not None
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                line = line.rstrip()
+                log_file.write(line + "\n")
+                log_file.flush()
+                _RUN_STATE["log_tail"].append(line)
+                if len(_RUN_STATE["log_tail"]) > 500:
+                    _RUN_STATE["log_tail"] = _RUN_STATE["log_tail"][-500:]
+                step = _classify_step(line)
+                if step:
+                    _RUN_STATE["step"] = step
+                if on_line is not None:
+                    try:
+                        on_line(line)
+                    except Exception:
+                        pass
+        finally:
+            proc.stdout.close()
+
+        rc = proc.wait()
+        return rc
+
+
 async def run_pipeline_subprocess(
     no_train: bool = False,
     on_log_line=None,
 ) -> int:
     """Запускает `python main_pipeline.py` в каталоге пайплайна, стримит stdout/stderr.
 
-    on_log_line: async callback (line: str) -> None
+    Не использует asyncio.create_subprocess_exec — он падает на Windows под
+    SelectorEventLoop (который uvicorn форсирует в режиме --reload).
+    Вместо этого — обычный subprocess.Popen в thread'е через asyncio.to_thread.
+
+    on_log_line: callback (может быть sync или async). Получает каждую строку лога.
     """
     if _RUN_STATE["running"]:
         raise RuntimeError("Пайплайн уже выполняется")
@@ -150,36 +223,29 @@ async def run_pipeline_subprocess(
         args.append("--no-train")
 
     log_path = settings.logs_dir / f"run_{int(datetime.now().timestamp())}.log"
-    log_file = log_path.open("w", encoding="utf-8")
+
+    # on_log_line принимаем любую: sync или coroutine. Из потока
+    # async-callback'и вызывать небезопасно — прокидываем их в event loop
+    # через run_coroutine_threadsafe.
+    loop = asyncio.get_running_loop() if on_log_line else None
+
+    def _on_line(line: str) -> None:
+        if on_log_line is None:
+            return
+        if asyncio.iscoroutinefunction(on_log_line):
+            assert loop is not None
+            asyncio.run_coroutine_threadsafe(on_log_line(line), loop)
+        else:
+            on_log_line(line)
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            cwd=str(settings.pipeline_root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        rc = await asyncio.to_thread(
+            _run_pipeline_blocking,
+            args,
+            str(settings.pipeline_root),
+            log_path,
+            _on_line,
         )
-
-        assert proc.stdout is not None
-        async for raw in proc.stdout:
-            line = raw.decode(errors="replace").rstrip()
-            log_file.write(line + "\n")
-            log_file.flush()
-            _RUN_STATE["log_tail"].append(line)
-            if len(_RUN_STATE["log_tail"]) > 500:
-                _RUN_STATE["log_tail"] = _RUN_STATE["log_tail"][-500:]
-            # Грубое определение шага по тексту
-            if "[1/7]" in line: _RUN_STATE["step"] = "data"
-            elif "[2/7]" in line: _RUN_STATE["step"] = "features"
-            elif "[3/7]" in line: _RUN_STATE["step"] = "training"
-            elif "[4/7]" in line: _RUN_STATE["step"] = "inference"
-            elif "[5/7]" in line: _RUN_STATE["step"] = "filters"
-            elif "[6/7]" in line: _RUN_STATE["step"] = "sizing"
-            elif "[7/7]" in line: _RUN_STATE["step"] = "backtest"
-            if on_log_line:
-                await on_log_line(line)
-
-        rc = await proc.wait()
         _RUN_STATE.update(
             exit_code=rc,
             running=False,
@@ -196,8 +262,6 @@ async def run_pipeline_subprocess(
             exit_code=-1,
         )
         raise
-    finally:
-        log_file.close()
 
 
 def list_training_history() -> list[dict[str, Any]]:
