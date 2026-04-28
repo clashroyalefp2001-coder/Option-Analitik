@@ -1,4 +1,18 @@
 """FastAPI app · точка входа."""
+import asyncio
+import sys
+
+# На Windows для asyncio.create_subprocess_exec нужен Proactor event loop.
+# SelectorEventLoop (иногда выбирается под Python 3.14) бросает
+# NotImplementedError при запуске подпроцессов.
+# Надо установить политику ДО инициализации uvicorn-loop.
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except AttributeError:
+        # На не-Windows или очень старых версиях свойства может не быть
+        pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
