@@ -169,12 +169,12 @@ def build_features(
             }
         )
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows).copy()
     if df.empty:
         return df
 
     # Считаем IV rank в скользящем окне по mid (proxy для IV)
     if "mid" in df.columns and len(df) >= 5:
-        df["iv_rank"] = _compute_iv_rank(df["mid"])
+        df.loc[:, "iv_rank"] = _compute_iv_rank(df["mid"])
 
     return df

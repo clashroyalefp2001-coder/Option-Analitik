@@ -125,7 +125,7 @@ def load_option_quotes(path: str | Path = "Option Si 06.2026.xlsx") -> pd.DataFr
     if df is None or df.empty:
         return empty
 
-    df = _normalize_columns(df)
+    df = _normalize_columns(df).copy()  # .copy() — чтобы избежать FutureWarning ChainedAssignmentError
 
     # Тип опциона → call/put
     if "type" in df.columns:
@@ -142,7 +142,7 @@ def load_option_quotes(path: str | Path = "Option Si 06.2026.xlsx") -> pd.DataFr
 
     # Экспирация
     if "expiry" in df.columns:
-        df["expiry"] = pd.to_datetime(df["expiry"], errors="coerce")
+        df["expiry"] = pd.to_datetime(df["expiry"], errors="coerce", dayfirst=True)
     else:
         df["expiry"] = pd.NaT
 
