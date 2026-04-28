@@ -92,13 +92,13 @@ REM ============================================================
 echo.
 echo [1/3] Установка Python-зависимостей пайплайна...
 pushd "%PIPELINE%"
-python -m pip install --user -r requirements.txt
+python -m pip install --user --upgrade-strategy only-if-needed -r requirements.txt
 popd
 
 echo.
 echo [2/3] Установка Python-зависимостей бэкенда...
 pushd "%BACKEND%"
-python -m pip install --user -r requirements.txt
+python -m pip install --user --upgrade-strategy only-if-needed -r requirements.txt
 popd
 
 echo.
