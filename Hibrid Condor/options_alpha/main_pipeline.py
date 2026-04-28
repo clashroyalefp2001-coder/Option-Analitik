@@ -1,186 +1,304 @@
 #!/usr/bin/env python3
-"""
-Options Trading Alpha Engine - Pipeline
-Автоматизированная система торговли американскими опционами на MOEX
+"""Options Trading Alpha Engine — основной пайплайн.
+
+Этапы:
+    1) Загрузка данных (underlying + опционные котировки)
+    2) Feature engineering (правильный T, IV-rank, греки)
+    3) (Опционально) Обучение модели предсказания edge
+    4) Инференс модели → predicted_edge, signal_confidence
+    5) Hard- и soft-фильтры
+    6) Расчёт размеров позиций (fractional Kelly)
+    7) Бэктест
+    8) Сохранение отчётов и метрик
 """
 
+from __future__ import annotations
+
+import argparse
 import json
+import logging
 import os
 import sys
-import pandas as pd
 from datetime import datetime
+from typing import Any, Dict
 
-# Добавляем текущую директорию в путь импорта
+import pandas as pd
+
+# Текущая директория в путь импорта
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-def main():
-    """Основной пайплайн"""
-    print("=== Options Trading Alpha Engine ===")
-    print(f"Запуск пайплайна: {datetime.now().strftime('%H:%M:%S')}")
-    
-    # Загрузка конфигурации
-    config_path = "config_live.json"
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        print(f"Конфигурация загружена из {config_path}")
+
+def _load_config(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        logging.warning("Не удалось прочитать %s: %s", path, exc)
+        return {}
+
+
+def _setup_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+def run_pipeline(
+    config_path: str = "config_live.json",
+    train_model: bool = True,
+    open_report: bool = False,
+) -> int:
+    log = logging.getLogger("pipeline")
+    log.info("=== Options Trading Alpha Engine ===")
+    log.info("Старт: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    config = _load_config(config_path)
+    if config:
+        log.info("Конфиг загружен: %s", config_path)
     else:
-        print("Конфигурация не найдена, используем значения по умолчанию")
-        config = {}
-    
-    # Импорты модулей
+        log.info("Конфиг не найден — используем значения по умолчанию")
+
     try:
         from data.fetcher import load_underlying, load_option_quotes
         from models.feature_store import build_features
-        from execution.filters.hard import apply_hard_filters as hard
-        from execution.filters.soft import apply_soft_filters as soft
-        from execution.sizer.kelly import fractional_kelly as calculate_kelly
+        from models.lgbm.trainer import train_model as fit_model
+        from models.inference import apply_model_predictions
+        from execution.filters.hard import apply_hard_filters
+        from execution.filters.soft import apply_soft_filters
+        from execution.sizer.kelly import fractional_kelly
         from backtest.engine import BacktestEngine
         from monitoring.metrics import compute_kpis, ModelMetrics
         from config import RISK_CONFIG
-        print("[OK] Все модули импортированы успешно")
-        
-        # Инициализация метрик модели (будет обновлено в конце)
-        model_metrics = ModelMetrics()
-        model_metrics.update_training_metrics(0.5, 0.6)  # Пример метрик
-        model_metrics.set_classification_metrics(0.85, 0.82, 0.83, 0.89)
-        model_metrics.set_feature_importance({
-            "fair_value": 0.25,
-            "mispricing": 0.20,
-            "delta": 0.15,
-            "gamma": 0.12,
-            "vega": 0.10,
-            "moneyness": 0.08,
-            "others": 0.10
-        })
-        # Не устанавливаем trading_metrics пока kpi не вычислен
-    except Exception as e:
-        print(f"[ERROR] Ошибка импорта модулей: {e}")
+    except Exception as exc:
+        log.exception("Ошибка импорта модулей: %s", exc)
         return 1
-    
-    # Загрузка данных
+
+    risk_cfg = {**RISK_CONFIG, **(config.get("RISK_CONFIG") or {})}
+
+    # 1. Данные
     try:
-        print("\n[1/6] Загрузка данных...")
+        log.info("[1/7] Загрузка данных")
         underlying = load_underlying()
         options = load_option_quotes()
-        print(f"   Базовый актив: {len(underlying)} записей")
-        print(f"   Опционы: {len(options)} записей")
-    except Exception as e:
-        print(f"[ERROR] Ошибка загрузки данных: {e}")
+        log.info("    underlying: %d записей", len(underlying))
+        log.info("    options:    %d записей", len(options))
+        if options.empty:
+            log.error("Котировки опционов отсутствуют — выход")
+            return 2
+    except Exception as exc:
+        log.exception("Ошибка загрузки данных: %s", exc)
         return 1
-    
-    # Feature engineering
+
+    # 2. Feature engineering
     try:
-        print("\n[2/6] Формирование признаков...")
-        df_features = build_features(underlying, options)
-        print(f"   Сформировано признаков: {len(df_features.columns)}")
-        print(f"   Колонки: {list(df_features.columns)}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка feature engineering: {e}")
+        log.info("[2/7] Feature engineering")
+        features = build_features(underlying, options)
+        log.info(
+            "    признаков: %d, строк: %d", len(features.columns), len(features)
+        )
+        if features.empty:
+            log.warning("После очистки признаков не осталось — выход")
+            return 0
+    except Exception as exc:
+        log.exception("Ошибка feature engineering: %s", exc)
         return 1
-    
-    # Signal generation
+
+    # 3. Обучение (опционально)
+    train_metrics: Dict[str, Any] = {}
+    if train_model:
+        try:
+            log.info("[3/7] Обучение модели")
+            train_metrics = fit_model(features)
+            log.info(
+                "    backend=%s, train_loss=%.6f, val_loss=%.6f, F1=%.3f",
+                train_metrics["backend"],
+                train_metrics["training_loss"],
+                train_metrics["validation_loss"],
+                train_metrics["f1_score"],
+            )
+        except Exception as exc:
+            log.exception("Ошибка обучения: %s", exc)
+            train_metrics = {}
+    else:
+        log.info("[3/7] Обучение пропущено (--no-train)")
+
+    # 4. Инференс
     try:
-        print("\n[3/6] Генерация сигналов...")
-        potential = df_features[df_features["mispricing"] > 0.5]
-        print(f"   Сформировано {len(potential)} потенциальных сигналов")
-        
+        log.info("[4/7] Применение модели")
+        features = apply_model_predictions(features)
+    except Exception as exc:
+        log.exception("Ошибка инференса: %s", exc)
+        return 1
+
+    # 5. Сигналы → фильтры
+    try:
+        log.info("[5/7] Фильтрация сигналов")
+        # Кандидаты: ненулевой edge
+        potential = features[features["predicted_edge"] > 0].copy()
+        log.info("    кандидатов: %d", len(potential))
         if potential.empty:
-            print("[WARN] Нет сигналов - выход")
+            log.warning("Нет потенциальных сигналов — выход")
+            _save_metrics(train_metrics, kpi={}, samples=len(features))
             return 0
-    except Exception as e:
-        print(f"[ERROR] Ошибка генерации сигналов: {e}")
-        return 1
-    
-    # Risk filtering
-    try:
-        print("\n[4/6] Фильтрация по рискам...")
-        after_hard = hard(potential, RISK_CONFIG)
-        after_soft = soft(after_hard, RISK_CONFIG)
-        print(f"   После hard фильтров: {len(after_hard)} сигналов")
-        print(f"   После soft фильтров: {len(after_soft)} сигналов")
-        
+
+        after_hard = apply_hard_filters(potential, risk_cfg)
+        after_soft = apply_soft_filters(after_hard, risk_cfg)
+        log.info(
+            "    после hard: %d, после soft: %d",
+            len(after_hard),
+            len(after_soft),
+        )
         if after_soft.empty:
-            print("[WARN] Нет сигналов после фильтров - выход")
+            log.warning("Нет сигналов после фильтров — выход")
+            _save_metrics(train_metrics, kpi={}, samples=len(features))
             return 0
-    except Exception as e:
-        print(f"[ERROR] Ошибка фильтрации: {e}")
+    except Exception as exc:
+        log.exception("Ошибка фильтрации: %s", exc)
         return 1
-    
-    # Size calculation
+
+    # 6. Sizing
     try:
-        print("\n[5/6] Расчёт размеров позиций...")
-        sizes = after_soft["predicted_edge"] * RISK_CONFIG["max_position_size_pct"] * 1000000.0
-        sizes = sizes.clip(lower=0)
-        sizes = sizes.round(2)
-        print(f"   Средний размер позиции: {sizes.mean():.2f}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка расчёта размеров: {e}")
+        log.info("[6/7] Расчёт размеров позиций")
+        budget = 1_000_000.0
+        max_pos = risk_cfg.get("max_position_size_pct", 0.05) * budget
+
+        sizes = []
+        for _, row in after_soft.iterrows():
+            edge_raw = row.get("predicted_edge", 0.0)
+            conf_raw = row.get("signal_confidence", 0.5)
+            try:
+                edge = float(edge_raw) if pd.notna(edge_raw) else 0.0
+            except (TypeError, ValueError):
+                edge = 0.0
+            try:
+                conf = float(conf_raw) if pd.notna(conf_raw) else 0.5
+            except (TypeError, ValueError):
+                conf = 0.5
+            avg_win = max(edge, 1e-6)
+            avg_loss = max(edge * 0.6, 1e-6)
+            size = fractional_kelly(
+                edge=edge,
+                win_rate=conf,
+                loss_rate=1 - conf,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                budget=max_pos,
+                kelly_frac=0.25,
+            )
+            if size is None or pd.isna(size):
+                size = 0.0
+            sizes.append(round(float(size), 2))
+        sizes_series = pd.Series(sizes, index=after_soft.index, name="size")
+        log.info(
+            "    средний размер: %.2f, max: %.2f",
+            sizes_series.mean(),
+            sizes_series.max(),
+        )
+    except Exception as exc:
+        log.exception("Ошибка расчёта размеров: %s", exc)
         return 1
-    
-    # Backtesting
+
+    # 7. Бэктест
     try:
-        print("\n[6/6] Запуск бэктеста...")
+        log.info("[7/7] Бэктест")
         engine = BacktestEngine()
-        engine.run(after_soft, sizes)
-        
+        engine.run(after_soft, sizes_series)
         equity_curve = engine.get_equity_curve()
         trades = engine.get_trades()
-        
-        print(f"   Кривая капитала: {len(equity_curve)} точек")
-        print(f"   Сделок: {len(trades)}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка бэктеста: {e}")
+        log.info(
+            "    кривая капитала: %d точек, сделок: %d",
+            len(equity_curve),
+            len(trades),
+        )
+    except Exception as exc:
+        log.exception("Ошибка бэктеста: %s", exc)
         return 1
-    
+
     # KPI
     try:
-        print("\n=== KPI ===")
         kpi = compute_kpis(equity_curve, trades)
+        log.info("--- KPI ---")
         for k, v in kpi.items():
-            print(f"   {k}: {v}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка расчёта KPI: {e}")
-        return 1
-    
-    # Save reports
+            log.info("    %s: %s", k, v)
+    except Exception as exc:
+        log.exception("Ошибка расчёта KPI: %s", exc)
+        kpi = {}
+
+    # Сохранение отчётов
     try:
-        print("\n=== Сохранение отчётов ===")
         engine.save_reports()
-        print("[OK] Отчёты сохранены в reports/")
-    except Exception as e:
-        print(f"[ERROR] Ошибка сохранения отчётов: {e}")
-        return 1
-    
-    # Open report
-    try:
-        import webbrowser
-        report_path = "reports/report.html"
-        if os.path.exists(report_path):
-            webbrowser.open(report_path)
-            print(f"[OK] Отчёт открыт: {report_path}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка открытия отчёта: {e}")
-        return 1
-    
-    # Сохранение метрик модели после вычисления KPI
-    try:
-        model_metrics.set_trading_metrics(
-            sharpe_ratio=kpi.get("sharpe_ratio", 0.0),
-            samples=len(options),
-            epochs=200,
-            training_time=1.5
-        )
-        
-        metrics_path = "reports/model_metrics.json"
-        with open(metrics_path, "w", encoding="utf-8") as f:
-            json.dump(model_metrics.get_all_metrics(), f, indent=2, ensure_ascii=False)
-        print(f"[OK] Метрики модели сохранены: {metrics_path}")
-    except Exception as e:
-        print(f"[WARN] Не удалось сохранить метрики: {e}")
-    
-    print("\n=== Пайплайн завершён успешно ===")
+        log.info("Отчёты сохранены: reports/")
+    except Exception as exc:
+        log.warning("Не удалось сохранить отчёты: %s", exc)
+
+    _save_metrics(train_metrics, kpi=kpi, samples=len(features))
+
+    if open_report:
+        try:
+            import webbrowser
+            report_path = os.path.abspath("reports/report.html")
+            if os.path.exists(report_path):
+                webbrowser.open(f"file://{report_path}")
+        except Exception:
+            pass
+
+    log.info("=== Пайплайн завершён ===")
     return 0
+
+
+def _save_metrics(
+    train_metrics: Dict[str, Any],
+    kpi: Dict[str, Any],
+    samples: int,
+) -> None:
+    """Объединяет метрики обучения и KPI бэктеста в один JSON."""
+    os.makedirs("reports", exist_ok=True)
+    payload = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "training_loss": train_metrics.get("training_loss", 0.0),
+        "validation_loss": train_metrics.get("validation_loss", 0.0),
+        "training_accuracy": train_metrics.get("training_accuracy", 0.0),
+        "validation_accuracy": train_metrics.get("validation_accuracy", 0.0),
+        "feature_importance": train_metrics.get("feature_importance", {}),
+        "roc_auc": train_metrics.get("roc_auc", 0.0),
+        "precision": train_metrics.get("precision", 0.0),
+        "recall": train_metrics.get("recall", 0.0),
+        "f1_score": train_metrics.get("f1_score", 0.0),
+        "sharpe_ratio": kpi.get("sharpe_ratio", 0.0),
+        "max_drawdown": kpi.get("max_drawdown", 0.0),
+        "total_return": kpi.get("total_return", 0.0),
+        "hit_rate": kpi.get("hit_rate", 0.0),
+        "trading_samples": train_metrics.get("trading_samples", samples),
+        "train_samples": train_metrics.get("train_samples", 0),
+        "val_samples": train_metrics.get("val_samples", 0),
+        "epochs": train_metrics.get("epochs", 0),
+        "training_time": train_metrics.get("training_time", 0.0),
+        "backend": train_metrics.get("backend", "unknown"),
+    }
+    path = os.path.join("reports", "model_metrics.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Options Alpha Engine pipeline")
+    parser.add_argument("--config", default="config_live.json")
+    parser.add_argument("--no-train", action="store_true",
+                        help="Не переобучать модель, использовать сохранённую")
+    parser.add_argument("--open-report", action="store_true")
+    parser.add_argument("--log-level", default="INFO")
+    args = parser.parse_args()
+    _setup_logging(args.log_level)
+    return run_pipeline(
+        config_path=args.config,
+        train_model=not args.no_train,
+        open_report=args.open_report,
+    )
+
 
 if __name__ == "__main__":
     sys.exit(main())

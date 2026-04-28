@@ -393,64 +393,40 @@ class TradingDashboard:
             self._log(f"❌ Ошибка watcher: {str(e)}", "error")
     
     def _load_model_metrics(self):
-        """Загрузить метрики модели из JSON файла"""
+        """Загрузить метрики модели из JSON файла и обновить KPI / графики."""
         metrics_path = "reports/model_metrics.json"
         if not os.path.exists(metrics_path):
             return
-        
+
         try:
             with open(metrics_path, "r", encoding="utf-8") as f:
                 metrics = json.load(f)
-            
-            # Обновить карточки KPI
+
             if "f1_score" in metrics:
-                self.kpi_cards["F1-Score"].update(f"{metrics['f1_score']:.2f}", "Precision: --")
+                self.kpi_cards["F1-Score"].update(f"{metrics['f1_score']:.2f}", "Validation")
             if "precision" in metrics:
-                self.kpi_cards["Accuracy"].update(f"{metrics['precision']:.2f}", f"Precision: {metrics['precision']:.2f}")
+                self.kpi_cards["Accuracy"].update(
+                    f"{metrics['precision']:.2f}",
+                    f"Recall: {metrics.get('recall', 0):.2f}",
+                )
             if "roc_auc" in metrics:
                 self.kpi_cards["AUC-ROC"].update(f"{metrics['roc_auc']:.2f}", "Validation")
             if "sharpe_ratio" in metrics:
-                self.kpi_cards["Sharpe Ratio"].update(f"{metrics['sharpe_ratio']:.2f}", "Annualized")
+                self.kpi_cards["Sharpe Ratio"].update(
+                    f"{metrics['sharpe_ratio']:.2f}", "Annualized"
+                )
             if "trading_samples" in metrics:
-                self.kpi_cards["Training Samples"].update(str(metrics['trading_samples']), "Current dataset")
+                self.kpi_cards["Training Samples"].update(
+                    str(metrics["trading_samples"]), "Current dataset"
+                )
             if "epochs" in metrics:
-                self.kpi_cards["Epochs"].update(str(metrics['epochs']), "Completed")
-            
-            self._log("✅ Метрики модели загружены", "success")
-        except Exception as e:
-            self._log(f"Ошибка загрузки метрик: {str(e)}", "error")
-    
-    def _load_model_metrics(self):
-        """Загрузить метрики модели из JSON файла"""
-        metrics_path = "reports/model_metrics.json"
-        if not os.path.exists(metrics_path):
-            return
-        
-        try:
-            with open(metrics_path, "r", encoding="utf-8") as f:
-                metrics = json.load(f)
-            
-            # Обновить карточки KPI
-            if "f1_score" in metrics:
-                self.kpi_cards["F1-Score"].update(f"{metrics['f1_score']:.2f}", "Precision: --")
-            if "precision" in metrics:
-                self.kpi_cards["Accuracy"].update(f"{metrics['precision']:.2f}", f"Precision: {metrics['precision']:.2f}")
-            if "roc_auc" in metrics:
-                self.kpi_cards["AUC-ROC"].update(f"{metrics['roc_auc']:.2f}", "Validation")
-            if "sharpe_ratio" in metrics:
-                self.kpi_cards["Sharpe Ratio"].update(f"{metrics['sharpe_ratio']:.2f}", "Annualized")
-            if "trading_samples" in metrics:
-                self.kpi_cards["Training Samples"].update(str(metrics['trading_samples']), "Current dataset")
-            if "epochs" in metrics:
-                self.kpi_cards["Epochs"].update(str(metrics['epochs']), "Completed")
-            
-            self._log("✅ Метрики модели загружены", "success")
-            
-            # Обновить графики
+                self.kpi_cards["Epochs"].update(str(metrics["epochs"]), "Completed")
+
             self._update_all_charts(metrics)
         except Exception as e:
-            self._log(f"Ошибка загрузки метрик: {str(e)}", "error")
-    
+            self._log(f"Ошибка загрузки метрик: {e}", "error")
+
+
     def _update_all_charts(self, metrics):
         """Обновить все графики с реальными данными"""
         try:
@@ -570,41 +546,22 @@ class TradingDashboard:
             self._log(f"Ошибка экспорта в Excel: {str(e)}", "error")
     
     def _start_live_refresh(self):
-        """Запустить live refresh метрик каждые 5 секунд"""
+        """Live refresh метрик каждые 5 секунд (запускается ровно один раз)."""
+        # Защита от повторного запуска (раньше функция дублировалась 4 раза
+        # и порождала 4 параллельных цикла обновления).
+        if getattr(self, "_live_refresh_started", False):
+            return
+        self._live_refresh_started = True
+
+        self._log("Live refresh запущен (обновление каждые 5 сек)", "info")
+
         def refresh_loop():
-            self._log("🔄 Live refresh запущен (обновление каждые 5 сек)", "info")
             self._load_model_metrics()
             self.root.after(5000, refresh_loop)
-        
+
         refresh_loop()
-    
-    def _start_live_refresh(self):
-        """Запустить live refresh метрик каждые 5 секунд"""
-        def refresh_loop():
-            self._log("🔄 Live refresh запущен (обновление каждые 5 сек)", "info")
-            self._load_model_metrics()
-            self.root.after(5000, refresh_loop)
-        
-        refresh_loop()
-    
-    def _start_live_refresh(self):
-        """Запустить live refresh метрик каждые 5 секунд"""
-        def refresh_loop():
-            self._log("🔄 Live refresh запущен (обновление каждые 5 сек)", "info")
-            self._load_model_metrics()
-            self.root.after(5000, refresh_loop)
-        
-        refresh_loop()
-    
-    def _start_live_refresh(self):
-        """Запустить live refresh метрик каждые 5 секунд"""
-        def refresh_loop():
-            self._log("🔄 Live refresh запущен (обновление каждые 5 сек)", "info")
-            self._load_model_metrics()
-            self.root.after(5000, refresh_loop)
-        
-        refresh_loop()
-    
+
+
     def run(self):
         """Запустить приложение"""
         self._log("=== Options Trading Alpha Engine ===", "info")

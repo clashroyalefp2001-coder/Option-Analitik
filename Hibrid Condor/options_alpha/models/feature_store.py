@@ -1,113 +1,163 @@
 # models/feature_store.py
 """Формирование признаков из pricing и данных."""
+
+from __future__ import annotations
+
 import math
+from typing import Optional
+
 import pandas as pd
+
 from pricing.binomial import price_american
 from config import DEFAULT_SIGMA, DEFAULT_R, DEFAULT_DIVIDEND
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    try:
+        v = float(x)
+        if math.isnan(v) or math.isinf(v):
+            return default
+        return v
+    except (TypeError, ValueError):
+        return default
+
+
+def _compute_iv_rank(group: pd.Series, window: int = 252) -> pd.Series:
+    """IV rank в скользящем окне: позиция текущей IV в её историческом диапазоне.
+
+    Если истории недостаточно — возвращает 0.5 (нейтральное значение).
+    """
+    rank = pd.Series(0.5, index=group.index, dtype=float)
+    for i in range(len(group)):
+        start = max(0, i - window + 1)
+        sub = group.iloc[start : i + 1]
+        if len(sub) < 5:
+            continue
+        lo, hi = sub.min(), sub.max()
+        if hi - lo < 1e-9:
+            continue
+        rank.iloc[i] = float((group.iloc[i] - lo) / (hi - lo))
+    return rank
+
 
 def build_features(
     underlying: pd.DataFrame,
     options: pd.DataFrame,
+    sigma: float = DEFAULT_SIGMA,
+    risk_free_rate: float = DEFAULT_R,
+    dividend: float = DEFAULT_DIVIDEND,
 ) -> pd.DataFrame:
-    """Создаёт DataFrame с признаками для каждой опционной серии."""
-    rows = []
-    
-    # Debug: print first few rows to see what we have
-    if len(options) > 0:
-        print(f"[build_features] First row: {options.iloc[0].to_dict()}")
-        print(f"[build_features] Columns: {list(options.columns)}")
-    
-    for _, row in options.iterrows():
-        try:
-            # Get required fields safely
-            underlying_price = row.get("underlying_price", row.get("price", 100.0))
-            strike = row.get("strike", 100.0)
-            bid_val = row.get("bid", 0)
-            ask_val = row.get("ask", 0)
-            option_type = row.get("type", "call")
-            
-            # Debug: print values for first row
-            if len(rows) == 0:
-                print(f"[build_features] Row values: underlying_price={underlying_price}, strike={strike}, bid={bid_val}, ask={ask_val}, type={option_type}")
-            
-            # Skip rows with invalid required fields
-            if pd.isna(underlying_price) or pd.isna(strike) or strike <= 0 or underlying_price <= 0:
-                print(f"[build_features] Skipping row - invalid underlying_price={underlying_price}, strike={strike}")
-                continue
-            if pd.isna(bid_val) or pd.isna(ask_val) or bid_val == 0 or ask_val == 0:
-                print(f"[build_features] Skipping row - invalid bid={bid_val}, ask={ask_val}")
-                continue
-            
-            # Calculate mid price
-            mid = (bid_val + ask_val) / 2.0
-            
-            # Skip rows with invalid mid price
-            if pd.isna(mid) or mid == 0:
-                print(f"[build_features] Skipping row - invalid mid={mid}")
-                continue
-            
-            # Calculate fair value
-            fair = price_american(
-                S=float(underlying_price),
-                K=float(strike),
-                T=0.5,  # 6 месяцев до экспирации (можно параметризовать)
-                r=DEFAULT_R,
-                sigma=DEFAULT_SIGMA,
-                dividend=DEFAULT_DIVIDEND,
-                option_type=str(option_type),
-            )
-                
-            mispricing = fair["fair_value"] - mid
-            edge = fair["fair_value"] - ask_val if fair["fair_value"] > mid else mid - fair["fair_value"]
-            
-            # Calculate moneyness safely
-            try:
-                moneyness = math.log(float(underlying_price) / float(strike))
-            except ValueError:
-                moneyness = 0.0
-            
-            # Calculate days to expiry safely
-            try:
-                expiry_date = pd.to_datetime(row["expiry"])
-                date_val = row["date"]
-                if pd.isna(expiry_date) or pd.isna(date_val):
-                    days_to_expiry = 30
-                else:
-                    days_to_expiry = max(1, (expiry_date - date_val).days)
-            except:
-                days_to_expiry = 30
-            
-            # Calculate bid-ask spread percentage safely
-            try:
-                bid_ask_spread_pct = (ask_val - bid_val) / mid * 100
-            except:
-                bid_ask_spread_pct = 0.0
+    """Создаёт DataFrame с признаками для каждой опционной серии.
 
-            rows.append({
-                "fair_value": fair["fair_value"],
+    Главные правки относительно прошлой версии:
+    - T рассчитывается из реального days_to_expiry (а не хардкодится 0.5)
+    - IV rank считается через скользящее окно по mid-price, а не хардкодится
+    - Нет print-спама в продакшене (только при пустых результатах)
+    """
+    if options is None or options.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in options.iterrows():
+        underlying_price = _safe_float(row.get("underlying_price", row.get("price")))
+        strike = _safe_float(row.get("strike"))
+        bid_val = _safe_float(row.get("bid"))
+        ask_val = _safe_float(row.get("ask"))
+        option_type = str(row.get("type", "call")).lower()
+
+        if underlying_price <= 0 or strike <= 0:
+            continue
+        if bid_val <= 0 or ask_val <= 0 or ask_val < bid_val:
+            continue
+
+        mid = (bid_val + ask_val) / 2.0
+        if mid <= 0:
+            continue
+
+        # Реальный days_to_expiry
+        try:
+            expiry_date = pd.to_datetime(row.get("expiry"))
+            obs_date = pd.to_datetime(row.get("date"))
+            if pd.isna(expiry_date) or pd.isna(obs_date):
+                days_to_expiry = 30
+            else:
+                days_to_expiry = max(1, (expiry_date - obs_date).days)
+        except Exception:
+            days_to_expiry = 30
+
+        T = days_to_expiry / 365.0  # ← главный фикс: правильный T, а не 0.5
+
+        fair = price_american(
+            S=underlying_price,
+            K=strike,
+            T=T,
+            r=risk_free_rate,
+            sigma=sigma,
+            dividend=dividend,
+            option_type=option_type,
+        )
+
+        mispricing = fair["fair_value"] - mid
+        # Edge с учётом стороны сделки и спреда
+        if fair["fair_value"] > ask_val:
+            # Покупаем по ask, продаём по fair
+            edge = fair["fair_value"] - ask_val
+            side = "buy"
+        elif fair["fair_value"] < bid_val:
+            # Шортим по bid, откупаем по fair
+            edge = bid_val - fair["fair_value"]
+            side = "sell"
+        else:
+            edge = 0.0
+            side = "neutral"
+
+        try:
+            moneyness = math.log(underlying_price / strike)
+        except ValueError:
+            moneyness = 0.0
+
+        bid_ask_spread_pct = (ask_val - bid_val) / mid if mid > 0 else 0.0
+
+        rows.append(
+            {
+                "date": row.get("date"),
+                "expiry": row.get("expiry"),
+                "strike": strike,
+                "type": option_type,
+                "underlying_price": underlying_price,
+                "bid": bid_val,
+                "ask": ask_val,
                 "mid": mid,
+                "fair_value": fair["fair_value"],
                 "mispricing": mispricing,
-                "bid_ask_adjusted_edge": edge,
+                "predicted_edge": edge,  # будет перезаписан моделью при инференсе
+                "side": side,
                 "delta": fair["delta"],
                 "gamma": fair["gamma"],
                 "vega": fair["vega"],
                 "theta": fair["theta"],
+                "rho": fair["rho"],
+                "early_exercise_premium": fair["early_exercise_premium"],
                 "moneyness": moneyness,
-                "iv_rank": 0.5,  # placeholder
                 "days_to_expiry": days_to_expiry,
-                "iv_skew": 0.0,  # placeholder
-                "iv_curvature": 0.0,  # placeholder
                 "bid_ask_spread_pct": bid_ask_spread_pct,
-                "open_interest": row.get("open_interest", 0),
-                "daily_volume": row.get("volume", 0),
-                "predicted_edge": edge,
-                "signal_confidence": 0.8,  # placeholder confidence
-                "signal_regime": "normal",  # placeholder regime
-            })
-        except Exception as e:
-            # Пропускаем проблемные строки
-            print(f"[build_features] Error processing row: {e}")
-            continue
+                "open_interest": _safe_float(row.get("open_interest", 0)),
+                "daily_volume": _safe_float(row.get("volume", 0)),
+                # Плейсхолдеры — заполняются на этапе обучения / инференса
+                "iv_rank": 0.5,
+                "iv_skew": 0.0,
+                "iv_curvature": 0.0,
+                "signal_confidence": 0.5,
+                "signal_regime": "normal",
+            }
+        )
 
-    print(f"[build_features] Successfully created {len(rows)} rows")
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # Считаем IV rank в скользящем окне по mid (proxy для IV)
+    if "mid" in df.columns and len(df) >= 5:
+        df["iv_rank"] = _compute_iv_rank(df["mid"])
+
+    return df
