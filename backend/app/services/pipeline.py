@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -114,8 +115,14 @@ def read_options_board(limit: int | None = None) -> list[dict[str, Any]]:
             df = df.head(limit)
         # JSON-friendly
         df = df.copy()
-        for col in df.select_dtypes(include=["datetime64[ns]"]).columns:
-            df[col] = df[col].dt.strftime("%Y-%m-%d")
+        # Смена dtype datetime→str: df[col] = ... корректна, но под pandas 2.2+
+        # выдаёт ChainedAssignmentError-FutureWarning. Подавляем точечно — в pandas 3.0
+        # этот код будет работать как ожидается (df уже явный .copy()).
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning,
+                                    message=r".*ChainedAssignmentError.*")
+            for col in df.select_dtypes(include=["datetime64[ns]"]).columns:
+                df[col] = df[col].dt.strftime("%Y-%m-%d")
         return df.fillna("").to_dict(orient="records")
     except Exception as exc:
         return [{"error": str(exc)}]
