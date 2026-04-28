@@ -184,7 +184,7 @@ def train_model(
         raise ValueError("features_df пуст — нечего обучать")
 
     df = features_df.copy()
-    df[TARGET_COLUMN] = build_target(df)
+    df.loc[:, TARGET_COLUMN] = build_target(df)
 
     available = [c for c in FEATURE_COLUMNS if c in df.columns]
     if len(available) < 3:
