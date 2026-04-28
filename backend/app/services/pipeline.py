@@ -158,6 +158,13 @@ def _run_pipeline_blocking(
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+        # Форсируем UTF-8 в дочернем процессе, чтобы кириллица в логах
+        # пайплайна не превращалась в кракозябры на Windows (cp1251 по умолчанию).
+        # Читаем мы тоже в UTF-8 — кодировки совпадают.
+        child_env = os.environ.copy()
+        child_env["PYTHONIOENCODING"] = "utf-8"
+        child_env["PYTHONUTF8"] = "1"
+
         proc = subprocess.Popen(
             args,
             cwd=cwd,
@@ -168,6 +175,7 @@ def _run_pipeline_blocking(
             encoding="utf-8",
             errors="replace",
             creationflags=creationflags,
+            env=child_env,
         )
 
         assert proc.stdout is not None
