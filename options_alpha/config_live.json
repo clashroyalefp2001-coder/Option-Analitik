@@ -1,0 +1,22 @@
+{
+  "STRATEGY_TYPE": "straddle",
+  "RISK_CONFIG": {
+    "max_spread_pct": 100,
+    "min_open_interest": 0,
+    "min_daily_volume": 0,
+    "min_days_to_expiry": 1,
+    "max_gamma_exposure_pct": 0.02,
+    "max_vega_exposure_pct": 0.02,
+    "max_delta_exposure_pct": 0.02,
+    "max_position_size_pct": 0.05,
+    "max_daily_loss_pct": 0.02,
+    "min_edge": 0.005,
+    "min_confidence": 0.7,
+    "kelly_frac": 0.2,
+    "stop_loss_pct": 0.5,
+    "max_portfolio_gamma": 10
+  },
+  "r": 0.002,
+  "sigma": 0.03,
+  "budget": 10000000
+}

@@ -152,7 +152,7 @@ REM ============================================================
 :RUN_UI
 echo.
 echo Запускаю бэкенд в новом окне (порт 8000)...
-start "Option-Analitik :: Backend (FastAPI)" cmd /k "cd /d "%BACKEND%" && python -m uvicorn app.main:app --reload --port 8000"
+start "OA Backend" cmd /k "cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload"
 
 echo Жду готовности бэкенда...
 call :WAIT_PORT 8000 30
@@ -162,7 +162,7 @@ if errorlevel 1 (
 
 echo.
 echo Запускаю фронтенд в новом окне (порт 5173)...
-start "Option-Analitik :: Frontend (Vite)" cmd /k "cd /d "%FRONTEND%" && npm run dev"
+start "OA Frontend" cmd /k "cd frontend && npm run dev"
 
 echo Жду готовности фронтенда...
 call :WAIT_PORT 5173 60

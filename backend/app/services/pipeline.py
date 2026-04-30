@@ -6,18 +6,13 @@ import json
 import os
 import subprocess
 import sys
-import threading
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-
 from app.config import settings
 
-
-# Глобальное состояние асинхронного запуска
 _RUN_STATE: dict[str, Any] = {
     "running": False,
     "started_at": None,
@@ -37,7 +32,6 @@ def get_run_state() -> dict[str, Any]:
 
 
 def read_metrics() -> dict[str, Any]:
-    """Читает reports/model_metrics.json. Возвращает пустой словарь, если файла нет."""
     p = settings.metrics_path
     if not p.exists():
         return {}
@@ -69,7 +63,8 @@ def read_config() -> dict[str, Any]:
 
 def write_config(payload: dict[str, Any]) -> None:
     settings.config_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
     )
 
 
@@ -78,8 +73,7 @@ def read_equity_curve() -> list[dict[str, Any]]:
     if not p.exists():
         return []
     try:
-        df = pd.read_csv(p)
-        return df.to_dict(orient="records")
+        return pd.read_csv(p).to_dict(orient="records")
     except Exception:
         return []
 
@@ -89,43 +83,95 @@ def read_trades() -> list[dict[str, Any]]:
     if not p.exists():
         return []
     try:
-        df = pd.read_csv(p)
-        return df.fillna("").to_dict(orient="records")
+        return pd.read_csv(p).fillna("").to_dict(orient="records")
     except Exception:
         return []
 
 
-def read_options_board(limit: int | None = None) -> list[dict[str, Any]]:
-    """Подгружает опционную доску через `data.fetcher.load_option_quotes`."""
+def get_data_source_file() -> str:
+    paths_to_try = [
+        "option_export.tsv",
+        "option_export.csv",
+        "Option Si 06.2026.xlsx",
+    ]
+    for p_str in paths_to_try:
+        if (settings.pipeline_root / p_str).exists():
+            return p_str
+    return "Файл не найден"
+
+
+def get_available_instruments() -> list[str]:
     sys_path_added = False
     try:
         if str(settings.pipeline_root) not in sys.path:
             sys.path.insert(0, str(settings.pipeline_root))
             sys_path_added = True
+
         from data.fetcher import load_option_quotes  # type: ignore
+
         cwd_prev = os.getcwd()
         os.chdir(settings.pipeline_root)
         try:
             df = load_option_quotes()
         finally:
             os.chdir(cwd_prev)
+
+        if df is None or df.empty or "underlying_symbol" not in df.columns:
+            return []
+
+        instruments = df["underlying_symbol"].dropna().unique().tolist()
+        return sorted([str(i) for i in instruments if i])
+
+    except Exception:
+        return []
+
+    finally:
+        if sys_path_added:
+            try:
+                sys.path.remove(str(settings.pipeline_root))
+            except ValueError:
+                pass
+
+
+def read_options_board(
+    limit: int | None = None,
+    instrument: str | None = None,
+) -> list[dict[str, Any]]:
+    sys_path_added = False
+
+    try:
+        if str(settings.pipeline_root) not in sys.path:
+            sys.path.insert(0, str(settings.pipeline_root))
+            sys_path_added = True
+
+        from data.fetcher import load_option_quotes  # type: ignore
+
+        cwd_prev = os.getcwd()
+        os.chdir(settings.pipeline_root)
+        try:
+            df = load_option_quotes()
+        finally:
+            os.chdir(cwd_prev)
+
         if df is None or df.empty:
             return []
+
+        if instrument and "underlying_symbol" in df.columns:
+            df = df.loc[df["underlying_symbol"] == instrument].copy()
+
         if limit:
             df = df.head(limit)
-        # JSON-friendly
-        df = df.copy()
-        # Смена dtype datetime→str: df[col] = ... корректна, но под pandas 2.2+
-        # выдаёт ChainedAssignmentError-FutureWarning. Подавляем точечно — в pandas 3.0
-        # этот код будет работать как ожидается (df уже явный .copy()).
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning,
-                                    message=r".*ChainedAssignmentError.*")
-            for col in df.select_dtypes(include=["datetime64[ns]"]).columns:
-                df[col] = df[col].dt.strftime("%Y-%m-%d")
+
+        df = df.copy(deep=True)
+
+        for col in df.select_dtypes(include=["datetime64[ns]"]).columns:
+            df.loc[:, col] = df[col].dt.strftime("%Y-%m-%d")
+
         return df.fillna("").to_dict(orient="records")
+
     except Exception as exc:
         return [{"error": str(exc)}]
+
     finally:
         if sys_path_added:
             try:
@@ -135,14 +181,20 @@ def read_options_board(limit: int | None = None) -> list[dict[str, Any]]:
 
 
 def _classify_step(line: str) -> str | None:
-    """Определяет текущий шаг пайплайна по тексту лога."""
-    if "[1/7]" in line: return "data"
-    if "[2/7]" in line: return "features"
-    if "[3/7]" in line: return "training"
-    if "[4/7]" in line: return "inference"
-    if "[5/7]" in line: return "filters"
-    if "[6/7]" in line: return "sizing"
-    if "[7/7]" in line: return "backtest"
+    if "[1/7]" in line:
+        return "data"
+    if "[2/7]" in line:
+        return "features"
+    if "[3/7]" in line:
+        return "training"
+    if "[4/7]" in line:
+        return "inference"
+    if "[5/7]" in line:
+        return "filters"
+    if "[6/7]" in line:
+        return "sizing"
+    if "[7/7]" in line:
+        return "backtest"
     return None
 
 
@@ -152,22 +204,13 @@ def _run_pipeline_blocking(
     log_file_path: Path,
     on_line=None,
 ) -> int:
-    """Синхронный запуск subprocess'а со стримингом stdout по строкам.
-
-    Использует subprocess.Popen вместо asyncio.create_subprocess_exec,
-    чтобы работать независимо от типа event loop. uvicorn на Windows
-    в режиме --reload форсирует SelectorEventLoop, который не умеет
-    subprocess_exec → NotImplementedError. Popen в потоке работает всегда.
-    """
     with log_file_path.open("w", encoding="utf-8") as log_file:
-        # На Windows нужен CREATE_NO_WINDOW, чтобы не открывалось окно консоли.
-        creationflags = 0
-        if sys.platform == "win32":
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        creationflags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if sys.platform == "win32"
+            else 0
+        )
 
-        # Форсируем UTF-8 в дочернем процессе, чтобы кириллица в логах
-        # пайплайна не превращалась в кракозябры на Windows (cp1251 по умолчанию).
-        # Читаем мы тоже в UTF-8 — кодировки совпадают.
         child_env = os.environ.copy()
         child_env["PYTHONIOENCODING"] = "utf-8"
         child_env["PYTHONUTF8"] = "1"
@@ -177,7 +220,7 @@ def _run_pipeline_blocking(
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=1,  # line-buffered
+            bufsize=1,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -185,42 +228,37 @@ def _run_pipeline_blocking(
             env=child_env,
         )
 
-        assert proc.stdout is not None
         try:
             for line in iter(proc.stdout.readline, ""):
                 line = line.rstrip()
+
                 log_file.write(line + "\n")
                 log_file.flush()
+
                 _RUN_STATE["log_tail"].append(line)
                 if len(_RUN_STATE["log_tail"]) > 500:
                     _RUN_STATE["log_tail"] = _RUN_STATE["log_tail"][-500:]
+
                 step = _classify_step(line)
                 if step:
                     _RUN_STATE["step"] = step
-                if on_line is not None:
+
+                if on_line:
                     try:
                         on_line(line)
                     except Exception:
                         pass
+
         finally:
             proc.stdout.close()
 
-        rc = proc.wait()
-        return rc
+        return proc.wait()
 
 
 async def run_pipeline_subprocess(
     no_train: bool = False,
     on_log_line=None,
 ) -> int:
-    """Запускает `python main_pipeline.py` в каталоге пайплайна, стримит stdout/stderr.
-
-    Не использует asyncio.create_subprocess_exec — он падает на Windows под
-    SelectorEventLoop (который uvicorn форсирует в режиме --reload).
-    Вместо этого — обычный subprocess.Popen в thread'е через asyncio.to_thread.
-
-    on_log_line: callback (может быть sync или async). Получает каждую строку лога.
-    """
     if _RUN_STATE["running"]:
         raise RuntimeError("Пайплайн уже выполняется")
 
@@ -238,17 +276,13 @@ async def run_pipeline_subprocess(
         args.append("--no-train")
 
     log_path = settings.logs_dir / f"run_{int(datetime.now().timestamp())}.log"
-
-    # on_log_line принимаем любую: sync или coroutine. Из потока
-    # async-callback'и вызывать небезопасно — прокидываем их в event loop
-    # через run_coroutine_threadsafe.
     loop = asyncio.get_running_loop() if on_log_line else None
 
     def _on_line(line: str) -> None:
-        if on_log_line is None:
+        if not on_log_line:
             return
+
         if asyncio.iscoroutinefunction(on_log_line):
-            assert loop is not None
             asyncio.run_coroutine_threadsafe(on_log_line(line), loop)
         else:
             on_log_line(line)
@@ -261,18 +295,20 @@ async def run_pipeline_subprocess(
             log_path,
             _on_line,
         )
+
         _RUN_STATE.update(
             exit_code=rc,
             running=False,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
+            finished_at=datetime.now().isoformat(),
             step="done" if rc == 0 else "error",
         )
+
         return rc
+
     except Exception:
-        # Гарантируем, что флаг running сбрасывается даже при исключении
         _RUN_STATE.update(
             running=False,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
+            finished_at=datetime.now().isoformat(),
             step="error",
             exit_code=-1,
         )
@@ -280,29 +316,36 @@ async def run_pipeline_subprocess(
 
 
 def list_training_history() -> list[dict[str, Any]]:
-    """Чтение истории обучений из логов backend/logs/run_*.log + текущая модель."""
-    history: list[dict[str, Any]] = []
+    history = []
+
     meta = read_model_meta()
     if meta:
         m = meta.get("metrics", {})
-        history.append({
-            "id": "current",
-            "label": "Текущая модель",
-            "backend": meta.get("backend", "unknown"),
-            "trained_at": _file_mtime_iso(settings.model_meta_path),
-            "f1_score": m.get("f1_score", 0.0),
-            "precision": m.get("precision", 0.0),
-            "recall": m.get("recall", 0.0),
-            "roc_auc": m.get("roc_auc", 0.0),
-            "training_loss": m.get("training_loss", 0.0),
-            "validation_loss": m.get("validation_loss", 0.0),
-            "samples": m.get("trading_samples", 0),
-            "is_active": True,
-        })
+
+        history.append(
+            {
+                "id": "current",
+                "label": "Текущая модель",
+                "backend": meta.get("backend", "unknown"),
+                "trained_at": _file_mtime_iso(settings.model_meta_path),
+                "f1_score": m.get("f1_score", 0.0),
+                "precision": m.get("precision", 0.0),
+                "recall": m.get("recall", 0.0),
+                "roc_auc": m.get("roc_auc", 0.0),
+                "training_loss": m.get("training_loss", 0.0),
+                "validation_loss": m.get("validation_loss", 0.0),
+                "samples": m.get("trading_samples", 0),
+                "is_active": True,
+            }
+        )
+
     return history
 
 
 def _file_mtime_iso(p: Path) -> str | None:
     if not p.exists():
         return None
-    return datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds")
+
+    return datetime.fromtimestamp(
+        p.stat().st_mtime
+    ).isoformat(timespec="seconds")

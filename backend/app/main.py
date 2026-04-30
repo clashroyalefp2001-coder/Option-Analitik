@@ -2,6 +2,15 @@
 import asyncio
 import sys
 
+import warnings
+import pandas as pd
+
+# Включаем режим Copy-on-Write (убирает ChainedAssignmentError warning в новых версиях)
+pd.options.mode.copy_on_write = True
+
+# На всякий случай полностью скрываем все FutureWarning
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 # На Windows для asyncio.create_subprocess_exec нужен Proactor event loop.
 # SelectorEventLoop (иногда выбирается под Python 3.14) бросает
 # NotImplementedError при запуске подпроцессов.

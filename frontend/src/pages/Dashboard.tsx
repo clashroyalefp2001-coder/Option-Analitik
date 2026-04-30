@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { AreaChart, Area, Tooltip, ResponsiveContainer } from "recharts";
 import {
   TrendingUp,
   TrendingDown,
@@ -9,10 +10,9 @@ import {
   Cpu,
   RefreshCw,
   Play,
-  ArrowUp,
-  ArrowDown,
   Gauge,
   Award,
+  CheckCircle2,
 } from "lucide-react";
 
 import { Topbar, StatusPill } from "../components/Topbar";
@@ -30,13 +30,29 @@ function num(v: number, digits = 2) {
 
 export function Dashboard() {
   const [m, setM] = useState<MetricsResponse | null>(null);
+  const [trades, setTrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Состояния для индикации кнопок
+  const [refreshSuccess, setRefreshSuccess] = useState(false);
+  const [runPipelineLoading, setRunPipelineLoading] = useState(false);
+  const [runPipelineSuccess, setRunPipelineSuccess] = useState(false);
 
   async function load() {
     setLoading(true);
+    setRefreshSuccess(false);
     try {
-      const r = await api.metrics();
+      // Запрашиваем метрики и трейды для постройки живого графика
+      const [r, tRes] = await Promise.all([
+        api.metrics(),
+        api.trades().catch(() => ({ trades: [] })) // не падаем, если трейдов нет
+      ]);
       setM(r);
+      setTrades(tRes.trades || []);
+      
+      // Зелёная галочка после успешного обновления
+      setRefreshSuccess(true);
+      setTimeout(() => setRefreshSuccess(false), 2000);
     } finally {
       setLoading(false);
     }
@@ -44,17 +60,50 @@ export function Dashboard() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 5000); // лёгкий live-refresh
+    const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, []);
 
   async function runPipeline() {
+    setRunPipelineLoading(true);
+    setRunPipelineSuccess(false);
     try {
       await api.runBacktest(false);
+      setRunPipelineSuccess(true);
+      setTimeout(() => setRunPipelineSuccess(false), 2000);
+      load(); // Сразу после завершения пайплайна обновляем графики и KPI
     } catch (e) {
       console.error(e);
+    } finally {
+      setRunPipelineLoading(false);
     }
   }
+
+  // Расчёт Cumulative PnL (Кривая капитала)
+  const chartData = useMemo(() => {
+    if (!trades || trades.length === 0) return [];
+    let sum = 1000000; // Базовый бюджет, совпадает с бэктестом по дефолту
+    const res = [{ index: 0, equity: sum, label: "Старт" }];
+    
+    // Сортируем трейды по времени исполнения
+    const sorted = [...trades].sort((a,b) => (a.date || a.timestamp || "").localeCompare(b.date || b.timestamp || ""));
+    
+    sorted.forEach((t, i) => {
+      sum += (t.pnl || 0);
+      res.push({
+        index: i + 1,
+        equity: sum,
+        label: t.date || t.timestamp || `Trade ${i+1}`
+      });
+    });
+    return res;
+  }, [trades]);
+
+  // Последние 5 сделок для виджета
+  const recentTrades = useMemo(() => {
+    if (!trades || trades.length === 0) return [];
+    return [...trades].sort((a,b) => (b.date || b.timestamp || "").localeCompare(a.date || a.timestamp || "")).slice(0, 5);
+  }, [trades]);
 
   return (
     <>
@@ -66,12 +115,21 @@ export function Dashboard() {
           </StatusPill>
         }
       >
-        <button className="btn btn-ghost" onClick={load} disabled={loading}>
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-          Обновить <span className="kbd">⌘R</span>
+        <button 
+          className={`btn ${refreshSuccess ? '!text-success !border-success bg-success/10' : 'btn-ghost'}`} 
+          onClick={load} 
+          disabled={loading}
+        >
+          {refreshSuccess ? <CheckCircle2 size={16} /> : <RefreshCw size={16} className={loading ? "animate-spin" : ""} />}
+          {refreshSuccess ? "Обновлено" : "Обновить"} <span className="kbd">⌘R</span>
         </button>
-        <button className="btn btn-primary" onClick={runPipeline}>
-          <Play size={16} /> Запустить пайплайн
+        <button 
+          className={`btn ${runPipelineSuccess ? '!bg-success !text-white !border-success' : 'btn-primary'}`} 
+          onClick={runPipeline}
+          disabled={runPipelineLoading}
+        >
+          {runPipelineSuccess ? <CheckCircle2 size={16} /> : runPipelineLoading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
+          {runPipelineSuccess ? "Завершено" : runPipelineLoading ? "В процессе..." : "Запустить пайплайн"}
         </button>
       </Topbar>
 
@@ -126,19 +184,41 @@ export function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
           <div className="lg:col-span-2">
-            <Card>
+            <Card className="flex flex-col h-[350px]">
               <CardHead title="Кривая капитала" icon={<Activity size={16} />} />
-              <EquityChartPlaceholder />
+              <div className="flex-1 mt-4 relative w-full h-full pb-4">
+                {chartData.length > 1 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <defs>
+                        <linearGradient id="colorEq" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", fontSize: "12px", color: "#f8fafc" }}
+                        itemStyle={{ color: "#3B82F6", fontWeight: "bold" }}
+                        labelStyle={{ display: "none" }}
+                        formatter={(val: any) => [`₽ ${Number(val).toLocaleString('ru-RU', {minimumFractionDigits: 0, maximumFractionDigits: 0})}`, "Баланс"]}
+                      />
+                      <Area type="monotone" dataKey="equity" stroke="#3B82F6" strokeWidth={2} fillOpacity={1} fill="url(#colorEq)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EquityChartPlaceholder />
+                )}
+              </div>
             </Card>
           </div>
           <Card>
             <CardHead title="Качество модели" icon={<Cpu size={16} />} />
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 mt-2">
               <ModelMetricRow label="F1-score · направление" value={m?.model.f1_score ?? 0} tone="brand" />
               <ModelMetricRow label="Precision" value={m?.model.precision ?? 0} tone="success" />
               <ModelMetricRow label="Recall" value={m?.model.recall ?? 0} tone="warning" />
               <ModelMetricRow label="ROC-AUC" value={m?.model.roc_auc ?? 0} tone="brand" />
-              <div className="border-t border-border-soft pt-4 text-xs text-text-2 flex justify-between">
+              <div className="border-t border-border-soft pt-4 mt-2 text-xs text-text-2 flex justify-between">
                 <span>Backend · {m?.model.backend ?? "—"}</span>
                 <span className="num">
                   {m?.model.trading_samples ?? 0} / {m?.model.train_samples ?? 0} / {m?.model.val_samples ?? 0}
@@ -148,9 +228,39 @@ export function Dashboard() {
           </Card>
         </div>
 
-        <Card>
-          <CardHead title="Последние сигналы" icon={<Zap size={16} />} />
-          <SignalsPlaceholder />
+        <Card className="!p-0 overflow-hidden">
+          <div className="px-6 pt-6 mb-4"><CardHead title="Последние сделки" icon={<Zap size={16} />} /></div>
+          {recentTrades.length > 0 ? (
+            <div className="overflow-x-auto pb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wider text-text-3 border-b border-border">
+                    {["Дата", "Инструмент", "Тип", "Страйк", "Сторона", "PnL"].map(h => <th key={h} className="px-6 py-2 font-medium">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentTrades.map((t, i) => (
+                    <tr key={i} className="border-b border-border-soft hover:bg-bg-2">
+                      <td className="px-6 py-2.5 num text-text-2">{t.date ?? t.timestamp ?? "—"}</td>
+                      <td className="px-6 py-2.5 font-medium">{t.underlying_symbol ?? t.symbol ?? "—"}</td>
+                      <td className="px-6 py-2.5">
+                        <span className={`badge ${t.type === "call" ? "badge-call" : "badge-put"}`}>{t.type ?? "—"}</span>
+                      </td>
+                      <td className="px-6 py-2.5 num">{t.strike ?? "—"}</td>
+                      <td className="px-6 py-2.5">
+                        <span className={`badge ${t.side === "buy" ? "badge-buy" : t.side === "sell" ? "badge-sell" : "badge-neu"}`}>{t.side ?? "—"}</span>
+                      </td>
+                      <td className={`px-6 py-2.5 num font-medium ${(t.pnl ?? 0) >= 0 ? "text-success" : "text-danger"}`}>
+                        {(t.pnl ?? 0) > 0 ? "+" : ""}{num(t.pnl ?? 0, 2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <SignalsPlaceholder />
+          )}
         </Card>
       </main>
     </>
@@ -179,31 +289,16 @@ function ModelMetricRow({
 
 function EquityChartPlaceholder() {
   return (
-    <div
-      className="h-[280px] rounded-md relative overflow-hidden"
-      style={{
-        background:
-          "linear-gradient(180deg, rgba(59,130,246,0.18) 0%, rgba(59,130,246,0) 100%), " +
-          "repeating-linear-gradient(0deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 56px), " +
-          "repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 80px)",
-      }}
-    >
-      <svg viewBox="0 0 800 280" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
-        <path
-          d="M0,210 C60,180 120,150 180,160 C240,170 300,140 360,120 C420,100 480,90 540,75 C600,60 660,80 720,55 C780,30 800,40 800,40"
-          fill="none"
-          stroke="#3B82F6"
-          strokeWidth="2"
-        />
-      </svg>
+    <div className="flex items-center justify-center w-full h-full text-sm text-text-3 bg-bg-2/30 rounded-md">
+      Сделок пока нет. Запустите пайплайн.
     </div>
   );
 }
 
 function SignalsPlaceholder() {
   return (
-    <div className="text-sm text-text-2 py-12 text-center">
-      Сигналы появятся после запуска пайплайна.
+    <div className="text-sm text-text-3 py-12 text-center">
+      Сделки появятся после успешного прогона пайплайна.
     </div>
   );
 }

@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from pydantic_settings import BaseSettings
 
-
-# Корень репозитория (поднимаемся из backend/app/config.py)
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PIPELINE_ROOT = REPO_ROOT / "Hibrid Condor" / "options_alpha"
-
+# Корень репозитория: C:\Project\Option Analitik
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+PIPELINE_ROOT = REPO_ROOT / "options_alpha"
 
 class Settings(BaseSettings):
     repo_root: Path = REPO_ROOT
@@ -19,8 +16,10 @@ class Settings(BaseSettings):
     model_meta_path: Path = PIPELINE_ROOT / "models" / "lgbm" / "model_meta.json"
     metrics_path: Path = PIPELINE_ROOT / "reports" / "model_metrics.json"
     logs_dir: Path = REPO_ROOT / "backend" / "logs"
+    
+    # Жесткий путь к файлу с данными из QUIK
+    tsv_data_path: Path = REPO_ROOT / "data" / "option_export.tsv"
 
-    # CORS — для dev-сборки с Vite
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:5174",
@@ -30,6 +29,6 @@ class Settings(BaseSettings):
     class Config:
         env_prefix = "OA_"
 
-
 settings = Settings()
 settings.logs_dir.mkdir(parents=True, exist_ok=True)
+(settings.repo_root / "data").mkdir(parents=True, exist_ok=True)

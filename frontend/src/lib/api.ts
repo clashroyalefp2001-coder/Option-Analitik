@@ -1,5 +1,4 @@
-// Тонкий обёрточный клиент над FastAPI
-
+// frontend/src/lib/api.ts
 const BASE = "/api";
 
 async function get<T>(path: string): Promise<T> {
@@ -31,8 +30,14 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   health: () => get<{ status: string; pipeline_root: string }>("/health"),
   metrics: () => get<MetricsResponse>("/metrics"),
-  options: (limit = 200) => get<{ rows: any[]; count: number }>(`/options?limit=${limit}`),
-  dataProfile: () => get<DataProfile>("/data/profile"),
+  // ОБНОВЛЕНО: Поддержка инструмента
+  options: (limit = 200, instrument?: string) => 
+    get<{ rows: any[]; count: number }>(`/options?limit=${limit}${instrument ? `&instrument=${encodeURIComponent(instrument)}` : ''}`),
+  dataProfile: (instrument?: string) => 
+    get<DataProfile>(`/data/profile${instrument ? `?instrument=${encodeURIComponent(instrument)}` : ''}`),
+  instruments: () => 
+    get<{ instruments: string[] }>("/data/instruments"),
+  // ... (остальные функции оставьте без изменений)
   strategyConfig: () => get<{ config: Record<string, any> }>("/strategy/config"),
   saveStrategyConfig: (cfg: Record<string, any>) =>
     put<{ ok: boolean }>("/strategy/config", { config: cfg }),
