@@ -212,6 +212,9 @@ class ForecastPipeline:
             self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
             engine.save_reports()
             
+            # Обновляем Kelly-статистику на основе OOS-сделок
+            update_kelly_stats_from_oos_trades(engine.trades)
+            
             return PipelineResult(status=0, message="Success", metrics={**artifact.metrics, **kpis})
 
         except Exception as exc:
