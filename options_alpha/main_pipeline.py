@@ -276,48 +276,48 @@ def run_pipeline(
 
     # 6. Position sizing
     try:
-        log.info("[6/7] Расчёт размеров позиций (Kelly Calibration)")
+        log.info("[6/7] Расчёт размеров позиций (Portfolio-Allocator + Kelly)")
 
-        # Total portfolio capital
-        portfolio_capital = float(risk_cfg.get("initial_capital", 1_000_000.0))
-        
+        # Initialize Portfolio Allocator
+        from execution.sizer.portfolio_allocator import PortfolioAllocator
+        allocator = PortfolioAllocator(risk_cfg)
+        allocator.reset()
+
         # Kelly Parameters from config
         kelly_frac_ui = float(risk_cfg.get("kelly_fraction", 0.20))
         max_pos_pct = float(risk_cfg.get("max_position_size_pct", 0.05))
         
-        # Global Portfolio Constraint
-        max_gross_deployment_pct = float(risk_cfg.get("max_gross_exposure", 1.0))
-        max_gross_monetary = portfolio_capital * max_gross_deployment_pct
-        current_allocated_monetary = 0.0
-
-        # Risk Budgeting: Kelly often works best when applied to a "Risk Sleeve" 
-        # Here we use the full capital as the base for Kelly, but our upgraded 
-        # fractional_kelly sizer has internal caps (max_fstar, max_position_pct).
-        
         # Эмпирическая калибровка
-        emp_stats = _get_empirical_stats()
-        gs = emp_stats["global"]
-        log.info("    калибровка (Global): win_rate=%.2f, avg_win=%.2f, avg_loss=%.2f (n=%d)",
-                 gs['win_rate'], gs['avg_win'], gs['avg_loss'], gs['sample_size'])
-        if len(emp_stats) > 1:
-            log.info("    найдено специфичных бакетов: %d", len(emp_stats) - 1)
+        emp_stats = KellyStatsStore().load()
+        gs = emp_stats
+        log.info("    калибровка (Kelly Store): win_rate=%.2f, median_win=%.2f, median_loss=%.2f (n=%d)",
+                 gs['win_rate'], gs['median_win'], gs['median_loss'], gs['sample_size'])
 
         sizes = []
 
         for _, row in after_soft.iterrows():
-            # Signal confidence from ML model as the 'p' probability
+            # Signal preparation for allocator
+            signal = {
+                "underlying": row.get("underlying_symbol", "SPY"),
+                "expiry": row.get("expiry", ""),
+                "delta": row.get("delta", 0.0),
+                "vega": row.get("vega", 0.0),
+                "signal_confidence": float(row.get("signal_confidence", 0.5))
+            }
+
+            # Kelly sizing with budget constraint
             conf = float(row.get("signal_confidence", 0.5) or 0.5)
             multiplier = float(row.get("multiplier", 100.0))
 
-            # Выбор бакета статы (Bucketed Kelly)
+            # Выбор бакета статы
             bucket = _to_bucket(row)
-            stats = emp_stats.get(bucket, emp_stats["global"])
+            stats = emp_stats.get(bucket, emp_stats)
             
             p = conf
-            w = stats['avg_win']
-            l = stats['avg_loss']
+            w = stats['median_win']
+            l = stats['median_loss']
 
-            # Call the upgraded production-grade sizer
+            # Initial Kelly calculation (without budget constraints)
             monetary_size = fractional_kelly(
                 win_rate=p,
                 avg_win=w,
@@ -325,53 +325,46 @@ def run_pipeline(
                 budget=portfolio_capital,
                 kelly_frac=kelly_frac_ui,
                 max_position_pct=max_pos_pct,
-                max_fstar=0.20,      # conservative leverage cap
-                min_avg_loss=0.1,    # safety floor for losses (10%)
+                max_fstar=0.20,
+                min_avg_loss=0.1,
             )
 
-            # Apply Global Allocation Cap
-            if current_allocated_monetary + monetary_size > max_gross_monetary:
-                monetary_size = max(0.0, max_gross_monetary - current_allocated_monetary)
+            # Apply Portfolio Allocator
+            allocatable_budget = allocator.available_risk_budget(signal)
+            final_size = min(monetary_size, allocatable_budget)
 
-            if pd.isna(monetary_size):
-                monetary_size = 0.0
+            if pd.isna(final_size):
+                final_size = 0.0
 
             fair_val = row.get("fair_value")
             mid_val = row.get("mid")
 
-            op_raw = fair_val if not pd.isna(fair_val) else mid_val
-            op_raw = op_raw if not pd.isna(op_raw) else 1.0
-
-            option_price = float(op_raw)
+            option_price = float(fair_val if not pd.isna(fair_val) else mid_val if not pd.isna(mid_val) else 1.0)
 
             if pd.isna(option_price) or option_price <= 0:
                 contracts = 0
             else:
                 try:
-                    # FIX: Correct contract calculation using multiplier
-                    contracts = int(monetary_size // (option_price * multiplier))
+                    contracts = int(final_size // (option_price * multiplier))
                 except (ValueError, OverflowError):
                     contracts = 0
 
-            if contracts < 1 and monetary_size > 0:
-                # If we have monetary budget but cannot afford 1 contract, we skip
-                # (or could force 1 if it doesn't break max_pos_pct too much)
+            if contracts < 1 and final_size > 0:
                 contracts = 0
 
-            # Update tracked allocation
-            current_allocated_monetary += contracts * option_price * multiplier
-            sizes.append(float(contracts))
-
-        sizes_series = pd.Series(
-            sizes,
-            index=after_soft.index,
-            name="size",
-        )
+            # Update allocator with actual allocation
+            actual_allocated = allocator.allocate(signal, contracts * option_price * multiplier)
+            sizes.append(contracts)
 
         log.info(
             "    средний размер: %.2f контр., max: %.2f контр.",
-            sizes_series.mean(),
-            sizes_series.max(),
+            pd.Series(sizes).mean(),
+            pd.Series(sizes).max(),
+        )
+        log.info(
+            "    использовано капитала: %d / %d",
+            int(allocator.used_capital),
+            int(portfolio_capital)
         )
 
     except Exception as exc:
