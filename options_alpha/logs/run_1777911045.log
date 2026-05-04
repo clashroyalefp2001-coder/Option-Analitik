@@ -1,0 +1,9 @@
+19:10:46 [INFO] === Options Trading Alpha Engine ===
+19:10:46 [INFO] Старт: 2026-05-04 19:10:46
+19:10:46 [INFO] Конфиг загружен: config_live.json
+19:10:48 [INFO] --- Switching to FORCAST pipeline mode ---
+19:10:48 [INFO] Fetching market data...
+19:10:48 [INFO] Loaded 483 rows from cache: data/raw/market\SiM4_2015-01-01_2024-05-01_1d.csv
+19:10:48 [INFO] Market data rows: 483
+19:10:48 [INFO] Backtesting on OOS...
+19:10:50 [WARNING] No signals.

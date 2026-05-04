@@ -1,31 +1,43 @@
 # execution/sizer/kelly.py
-"""Position sizing based on fractional Kelly."""
+import numpy as np
 
-
-def fractional_kelly(edge, win_rate, loss_rate, avg_win, avg_loss, budget, kelly_frac=0.25):
+def fractional_kelly(
+    win_rate,
+    avg_win,
+    avg_loss,
+    budget,
+    kelly_frac=0.25,
+    max_fstar=0.20,
+    max_position_pct=0.05,
+    min_avg_loss=0.10,
+    max_win_rate=0.80,
+    **kwargs
+):
     """
-    edge: expected profit per trade (can be negative)
-    win_rate: probability of win
-    loss_rate: probability of loss (1 - win_rate)
-    avg_win: average winning trade return
-    avg_loss: average losing trade return (positive number)
-    budget: total capital allocated for this position
-    kelly_frac: fraction of full Kelly (0.25 = 25% of Kelly)
-
-    Returns: dollar amount to invest.
+    Production-grade fractional Kelly calculation with regularization and hard risk caps.
+    
+    Prevents sizing explosions by capping inputs and outputs.
     """
-    if avg_win <= 0 or avg_loss <= 0:
+    if avg_win <= 0:
         return 0.0
-    # Full Kelly: f* = (win_rate / avg_loss) - (loss_rate / avg_win)
-    # But we use edge-based: f* = edge / (avg_win**2) if edge>0 else 0
-    if edge <= 0:
-        return 0.0
-    # Simplified: use edge as expected return, and assume risk (variance) as avg_loss**2
-    variance = avg_loss ** 2
-    if variance == 0:
-        return 0.0
-    full_kelly = edge / variance
-    # Apply fractional Kelly
-    f = full_kelly * kelly_frac
-    # Cap at budget
-    return min(f * budget, budget)
+
+    # Regularization: Noisy distributions often show unrealistic stats
+    win_rate = np.clip(win_rate, 0.05, max_win_rate)
+    avg_loss = max(avg_loss, min_avg_loss)
+
+    b = avg_win / avg_loss
+    q = 1.0 - win_rate
+
+    # f* = p - q/b
+    f_star = win_rate - q / b
+    
+    # Cap the f_star leverage (leverage is dangerous in options)
+    f_star = np.clip(f_star, 0.0, max_fstar)
+
+    # Calculate final size relative to budget
+    size = budget * f_star * kelly_frac
+    
+    # Final hard constraint: max % of capital allowed for single position
+    size = min(size, budget * max_position_pct)
+
+    return float(size)

@@ -28,6 +28,9 @@ RISK_CONFIG = {
     "max_daily_loss_pct": 0.02,       # max daily loss % of capital
     "min_edge": 0.001,                # minimum edge for soft filter (increased)
     "min_confidence": 0.75,           # minimum confidence for soft filter (increased)
+    "target_horizon": 5,              # prediction horizon (for target calculation)
+    "kelly_fraction": 0.20,           # conservative fractional Kelly (applied to f*)
+    "initial_capital": 1000000.0,     # base portfolio capital for sizing
 }
 
 # Risk limits thresholds (for quick access)

@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
-import { AreaChart, Area, Tooltip, ResponsiveContainer } from "recharts";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { AreaChart, Area, Tooltip, ResponsiveContainer, YAxis } from "recharts";
 import {
   TrendingUp,
   TrendingDown,
@@ -32,11 +32,13 @@ export function Dashboard() {
   const [m, setM] = useState<MetricsResponse | null>(null);
   const [trades, setTrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  
-  // Состояния для индикации кнопок
   const [refreshSuccess, setRefreshSuccess] = useState(false);
   const [runPipelineLoading, setRunPipelineLoading] = useState(false);
   const [runPipelineSuccess, setRunPipelineSuccess] = useState(false);
+  
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const isLoadingRef = useRef(runPipelineLoading);
+  isLoadingRef.current = runPipelineLoading;
 
   async function load() {
     setLoading(true);
@@ -49,8 +51,6 @@ export function Dashboard() {
       ]);
       setM(r);
       setTrades(tRes.trades || []);
-      
-      // Зелёная галочка после успешного обновления
       setRefreshSuccess(true);
       setTimeout(() => setRefreshSuccess(false), 2000);
     } finally {
@@ -60,21 +60,36 @@ export function Dashboard() {
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
+    const id = setInterval(load, 15000);
+    
+    const checkPipeline = async () => {
+        const status = await api.getPipelineStatus();
+        
+        if (status && status.running) {
+            if (!isLoadingRef.current) setRunPipelineLoading(true);
+        } else if (status && !status.running && isLoadingRef.current) {
+            setRunPipelineLoading(false);
+            setRunPipelineSuccess(true);
+            setTimeout(() => setRunPipelineSuccess(false), 3000);
+            load();
+        }
+    };
+    checkPipeline();
+    const pId = setInterval(checkPipeline, 1000);
+    
+    return () => {
+      clearInterval(id);
+      clearInterval(pId);
+    };
   }, []);
 
   async function runPipeline() {
     setRunPipelineLoading(true);
     setRunPipelineSuccess(false);
     try {
-      await api.runBacktest(false);
-      setRunPipelineSuccess(true);
-      setTimeout(() => setRunPipelineSuccess(false), 2000);
-      load(); // Сразу после завершения пайплайна обновляем графики и KPI
+      await api.runBacktest(true);
     } catch (e) {
       console.error(e);
-    } finally {
       setRunPipelineLoading(false);
     }
   }
@@ -111,7 +126,7 @@ export function Dashboard() {
         title="Обзор"
         status={
           <StatusPill tone="ok">
-            Модель: {m?.model.backend ?? "—"} · F1={num(m?.model.f1_score ?? 0)}
+            Модель: {m?.model?.backend ?? "—"} · F1={num(m?.model?.f1_score ?? 0)}
           </StatusPill>
         }
       >
@@ -123,14 +138,16 @@ export function Dashboard() {
           {refreshSuccess ? <CheckCircle2 size={16} /> : <RefreshCw size={16} className={loading ? "animate-spin" : ""} />}
           {refreshSuccess ? "Обновлено" : "Обновить"} <span className="kbd">⌘R</span>
         </button>
-        <button 
-          className={`btn ${runPipelineSuccess ? '!bg-success !text-white !border-success' : 'btn-primary'}`} 
-          onClick={runPipeline}
-          disabled={runPipelineLoading}
-        >
-          {runPipelineSuccess ? <CheckCircle2 size={16} /> : runPipelineLoading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
-          {runPipelineSuccess ? "Завершено" : runPipelineLoading ? "В процессе..." : "Запустить пайплайн"}
-        </button>
+        <div className="flex gap-2">
+          <button 
+            className={`btn ${runPipelineSuccess ? '!bg-success !text-white !border-success' : 'btn-primary'}`} 
+            onClick={runPipeline}
+            disabled={runPipelineLoading}
+          >
+            {runPipelineSuccess ? <CheckCircle2 size={16} /> : runPipelineLoading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
+            {runPipelineSuccess ? "Завершено" : runPipelineLoading ? "В процессе..." : "Запустить пайплайн"}
+          </button>
+        </div>
       </Topbar>
 
       <main className="p-8">
@@ -139,7 +156,7 @@ export function Dashboard() {
             <div className="text-[22px] font-semibold tracking-tight">Состояние стратегии</div>
             <div className="text-sm text-text-2 mt-1">
               {m?.timestamp ? `Последний прогон · ${m.timestamp}` : "Прогонов пока не было"}
-              {m?.model.trading_samples ? ` · ${m.model.trading_samples} строк фич` : ""}
+              {m?.model?.trading_samples ? ` · ${m.model.trading_samples} строк фич` : ""}
             </div>
           </div>
         </div>
@@ -148,37 +165,36 @@ export function Dashboard() {
           <KpiCard
             label="Sharpe"
             icon={<TrendingUp size={14} />}
-            value={num(m?.kpi.sharpe_ratio ?? 0)}
-            delta={(m?.kpi.sharpe_ratio ?? 0) > 0 ? "положительный" : "—"}
-            deltaTone={(m?.kpi.sharpe_ratio ?? 0) > 0 ? "up" : "neutral"}
+            value={num(m?.kpi?.sharpe_ratio ?? 0)}
+            delta="—"
+            deltaTone="neutral"
           />
           <KpiCard
             label="Max DD"
             icon={<TrendingDown size={14} />}
-            value={pct(m?.kpi.max_drawdown ?? 0)}
-            deltaTone={(m?.kpi.max_drawdown ?? 0) > -0.1 ? "up" : "down"}
+            value={pct(m?.kpi?.max_drawdown ?? 0)}
           />
           <KpiCard
             label="Hit-rate"
             icon={<Target size={14} />}
-            value={pct(m?.kpi.hit_rate ?? 0)}
+            value={pct(m?.kpi?.hit_rate ?? 0)}
           />
           <KpiCard
             label="Total return"
             icon={<Wallet size={14} />}
-            value={pct(m?.kpi.total_return ?? 0)}
-            delta={(m?.kpi.total_return ?? 0) >= 0 ? "↑ за период" : "↓ за период"}
-            deltaTone={(m?.kpi.total_return ?? 0) >= 0 ? "up" : "down"}
+            value={pct(m?.kpi?.total_return ?? 0)}
+            delta={(m?.kpi?.total_return ?? 0) >= 0 ? "↑ за период" : "↓ за период"}
+            deltaTone={(m?.kpi?.total_return ?? 0) >= 0 ? "up" : "down"}
           />
           <KpiCard
             label="CAGR"
             icon={<Gauge size={14} />}
-            value={pct(m?.kpi.cagr ?? 0)}
+            value={pct(m?.kpi?.cagr ?? 0)}
           />
           <KpiCard
             label="Calmar"
             icon={<Award size={14} />}
-            value={num(m?.kpi.calmar ?? 0)}
+            value={num(m?.kpi?.calmar ?? 0)}
           />
         </div>
 
@@ -196,6 +212,7 @@ export function Dashboard() {
                           <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
                         </linearGradient>
                       </defs>
+                      <YAxis domain={['dataMin', 'dataMax']} hide={true} />
                       <Tooltip 
                         contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", borderRadius: "8px", fontSize: "12px", color: "#f8fafc" }}
                         itemStyle={{ color: "#3B82F6", fontWeight: "bold" }}
@@ -211,18 +228,21 @@ export function Dashboard() {
               </div>
             </Card>
           </div>
-          <Card>
-            <CardHead title="Качество модели" icon={<Cpu size={16} />} />
-            <div className="flex flex-col gap-4 mt-2">
-              <ModelMetricRow label="F1-score · направление" value={m?.model.f1_score ?? 0} tone="brand" />
-              <ModelMetricRow label="Precision" value={m?.model.precision ?? 0} tone="success" />
-              <ModelMetricRow label="Recall" value={m?.model.recall ?? 0} tone="warning" />
-              <ModelMetricRow label="ROC-AUC" value={m?.model.roc_auc ?? 0} tone="brand" />
-              <div className="border-t border-border-soft pt-4 mt-2 text-xs text-text-2 flex justify-between">
-                <span>Backend · {m?.model.backend ?? "—"}</span>
-                <span className="num">
-                  {m?.model.trading_samples ?? 0} / {m?.model.train_samples ?? 0} / {m?.model.val_samples ?? 0}
-                </span>
+          <Card className="h-full">
+            <CardHead title="Качество модели" icon={<Award size={16} />} />
+            <div className="grid grid-cols-2 gap-y-6 gap-x-4 mt-6">
+              <ModelMetric label="F1-score · направление" value={m?.model?.f1_score ?? 0} />
+              <ModelMetric label="Precision" value={m?.model?.precision ?? 0} />
+              <ModelMetric label="Recall" value={m?.model?.recall ?? 0} />
+              <ModelMetric label="ROC-AUC" value={m?.model?.roc_auc ?? 0} />
+            </div>
+            <div className="border-t border-border pt-6 mt-6">
+              <div className="text-[10px] uppercase font-bold text-text-3 tracking-wider mb-1.5 flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-brand-1"></span>
+                Backend · {m?.model?.backend ?? "—"}
+              </div>
+              <div className="text-xl font-bold num text-text-1">
+                {m?.model?.trading_samples ?? 0} / {m?.model?.train_samples ?? 0} / {m?.model?.val_samples ?? 0}
               </div>
             </div>
           </Card>
@@ -267,22 +287,21 @@ export function Dashboard() {
   );
 }
 
-function ModelMetricRow({
+function ModelMetric({
   label,
   value,
-  tone,
 }: {
   label: string;
   value: number;
-  tone?: "brand" | "success" | "warning" | "danger";
 }) {
   return (
     <div>
-      <div className="flex justify-between text-xs text-text-2 mb-1.5">
-        <span>{label}</span>
-        <span className="num text-text-1">{value.toFixed(2)}</span>
+      <div className="text-[10px] uppercase font-bold text-text-3 tracking-wider mb-1.5 truncate">
+        {label}
       </div>
-      <Progress value={value} tone={tone ?? "brand"} />
+      <div className="text-2xl font-bold num text-text-1 leading-none">
+        {value.toFixed(2)}
+      </div>
     </div>
   );
 }

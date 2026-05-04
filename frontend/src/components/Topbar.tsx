@@ -1,39 +1,36 @@
 import { ReactNode } from "react";
 
-export function Topbar({
-  title,
-  status,
-  children,
-}: {
-  title: string;
-  status?: ReactNode;
-  children?: ReactNode;
-}) {
+export function Topbar({ title, children, status }: { title: string; children?: ReactNode; status?: ReactNode }) {
   return (
-    <header className="h-14 px-8 border-b border-border flex items-center gap-4 bg-bg-0 sticky top-0 z-10">
-      <span className="font-semibold text-[15px] tracking-tight">{title}</span>
-      {status}
-      <div className="flex-1" />
-      {children}
-    </header>
+    <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-gray-200 px-8 py-4 flex items-center justify-between">
+      <div className="flex items-center gap-4">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">{title}</h1>
+        {status}
+      </div>
+      <div className="flex items-center gap-3">
+        {children}
+      </div>
+    </div>
   );
 }
 
-export function StatusPill({
-  tone = "ok",
-  children,
-}: {
-  tone?: "ok" | "warn" | "err";
-  children: ReactNode;
-}) {
-  const dotColor =
-    tone === "warn" ? "bg-warning shadow-[0_0_0_2px_rgba(245,158,11,0.18)]" :
-    tone === "err"  ? "bg-danger shadow-[0_0_0_2px_rgba(239,68,68,0.2)]" :
-                       "bg-success shadow-[0_0_0_2px_rgba(16,185,129,0.18)]";
+export function StatusPill({ children, tone }: { children?: ReactNode; tone?: string }) {
+  const map: Record<string, string> = {
+    brand: "bg-blue-100 text-blue-800 border-blue-200",
+    ok: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    warning: "bg-orange-100 text-orange-800 border-orange-200",
+    danger: "bg-rose-100 text-rose-800 border-rose-200",
+    offline: "bg-gray-100 text-gray-800 border-gray-200"
+  };
+  
+  const state = tone || "offline";
   return (
-    <span className="inline-flex items-center gap-2 px-3 py-1 text-xs font-medium rounded-full border border-border text-text-2">
-      <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+    <div className={`px-3 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-2 shadow-sm ${map[state] || map.offline}`}>
+      <span className="relative flex h-2 w-2">
+        {state === 'ok' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>}
+        <span className={`relative inline-flex rounded-full h-2 w-2 ${state === 'ok' ? 'bg-emerald-500' : 'bg-current'}`}></span>
+      </span>
       {children}
-    </span>
+    </div>
   );
 }

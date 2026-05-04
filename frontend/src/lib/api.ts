@@ -1,62 +1,19 @@
-// frontend/src/lib/api.ts
-const BASE = "/api";
-
-async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-}
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-}
-
-async function put<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-}
-
-export const api = {
-  health: () => get<{ status: string; pipeline_root: string }>("/health"),
-  metrics: () => get<MetricsResponse>("/metrics"),
-  // ОБНОВЛЕНО: Поддержка инструмента
-  options: (limit = 200, instrument?: string) => 
-    get<{ rows: any[]; count: number }>(`/options?limit=${limit}${instrument ? `&instrument=${encodeURIComponent(instrument)}` : ''}`),
-  dataProfile: (instrument?: string) => 
-    get<DataProfile>(`/data/profile${instrument ? `?instrument=${encodeURIComponent(instrument)}` : ''}`),
-  instruments: () => 
-    get<{ instruments: string[] }>("/data/instruments"),
-  // ... (остальные функции оставьте без изменений)
-  strategyConfig: () => get<{ config: Record<string, any> }>("/strategy/config"),
-  saveStrategyConfig: (cfg: Record<string, any>) =>
-    put<{ ok: boolean }>("/strategy/config", { config: cfg }),
-  trainingHistory: () => get<{ runs: TrainingRun[] }>("/training/history"),
-  runTraining: () => post<{ started: boolean }>("/training/run"),
-  runBacktest: (noTrain = false) =>
-    post<{ started: boolean; no_train: boolean }>(`/backtest/run?no_train=${noTrain}`),
-  equity: () => get<{ points: any[] }>("/backtest/equity"),
-  trades: () => get<{ trades: any[] }>("/backtest/trades"),
-  state: () => get<RunState>("/backtest/state"),
-  logsTail: (n = 200) => get<{ lines: string[]; step: string | null; running: boolean }>(`/logs/tail?n=${n}`),
-};
-
 export interface MetricsResponse {
+  winRate: number;
+  totalPnL: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  expectedValue: number;
+  tradeCount: number;
+  uptime: number;
+  status: "Active" | "Backtest" | "Offline";
+  recentEvents: string[];
+  timestamp?: string;
   kpi: {
     sharpe_ratio: number;
     max_drawdown: number;
-    total_return: number;
     hit_rate: number;
+    total_return: number;
     cagr: number;
     calmar: number;
   };
@@ -66,50 +23,158 @@ export interface MetricsResponse {
     precision: number;
     recall: number;
     roc_auc: number;
-    training_loss: number;
-    validation_loss: number;
     trading_samples: number;
     train_samples: number;
     val_samples: number;
-    training_time: number;
-    features: string[];
-    feature_importance: Record<string, number>;
   };
-  timestamp: string | null;
+}
+
+export interface Trade {
+  id: string;
+  date: string;
+  instrument: string;
+  type: string;
+  pnl: number;
+  underlying_symbol?: string;
+  symbol?: string;
+  strike?: string | number;
+  side?: string;
 }
 
 export interface DataProfile {
-  total: number;
-  calls: number;
-  puts: number;
-  strike_min: number;
-  strike_max: number;
-  days_min: number;
-  days_max: number;
   file: string;
+  total: number;
+  calls?: number;
+  puts?: number;
+  strike_min?: number;
+  strike_max?: number;
+  days_min?: number;
+  days_max?: number;
   error?: string;
 }
 
-export interface TrainingRun {
-  id: string;
-  label: string;
-  backend: string;
-  trained_at: string | null;
-  f1_score: number;
-  precision: number;
-  recall: number;
-  roc_auc: number;
-  training_loss: number;
-  validation_loss: number;
-  samples: number;
-  is_active: boolean;
-}
+const API_URL = "/internal_fastapi";
 
-export interface RunState {
-  running: boolean;
-  started_at: string | null;
-  finished_at: string | null;
-  exit_code: number | null;
-  step: string | null;
-  log_tail: string[];
-}
+export const api = {
+  async metrics(): Promise<MetricsResponse> {
+    try {
+      const resp = await fetch(`${API_URL}/metrics/`);
+      if (!resp.ok) throw new Error(`Backend metrics error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend metrics not available", e);
+      return {
+        winRate: 0,
+        totalPnL: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        expectedValue: 0,
+        tradeCount: 0,
+        uptime: 0,
+        status: "Offline",
+        recentEvents: [],
+        kpi: { sharpe_ratio: 0, max_drawdown: 0, hit_rate: 0, total_return: 0, cagr: 0, calmar: 0 },
+        model: { backend: "—", f1_score: 0, precision: 0, recall: 0, roc_auc: 0, trading_samples: 0, train_samples: 0, val_samples: 0 }
+      };
+    }
+  },
+  async trades(): Promise<{ trades: Trade[] }> {
+    try {
+      const resp = await fetch(`${API_URL}/data/trades`);
+      if (!resp.ok) throw new Error(`Backend trades error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend trades not available", e);
+      return { trades: [] };
+    }
+  },
+  async runBacktest(useLive: boolean): Promise<void> {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ useLive }),
+      });
+      if (!resp.ok) throw new Error(`Backend runBacktest error: ${resp.status}`);
+    } catch (e) {
+      console.error("Backend runBacktest failed", e);
+      throw e;
+    }
+  },
+  async getPipelineStatus(): Promise<any> {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/status?_t=${Date.now()}`, {
+        cache: "no-store"
+      });
+      if (!resp.ok) throw new Error(`Backend status error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      return null;
+    }
+  },
+  async dataProfile(instrument?: string): Promise<DataProfile> {
+    try {
+      const query = instrument ? `?instrument=${instrument}` : '';
+      const resp = await fetch(`${API_URL}/data/profile${query}`);
+      if (!resp.ok) throw new Error(`Backend dataProfile error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend dataProfile not available", e);
+      return { file: "—", total: 0 };
+    }
+  },
+  async options(limit: number, instrument?: string): Promise<{ rows: any[] }> {
+    try {
+      const query = instrument ? `?instrument=${instrument}&limit=${limit}` : `?limit=${limit}`;
+      const resp = await fetch(`${API_URL}/data/options${query}`);
+      if (!resp.ok) throw new Error(`Backend options error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend options not available", e);
+      return { rows: [] };
+    }
+  },
+  async instruments(): Promise<{ instruments: string[] }> {
+    try {
+      const resp = await fetch(`${API_URL}/data/instruments`);
+      if (!resp.ok) throw new Error(`Backend instruments error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend instruments not available", e);
+      return { instruments: [] };
+    }
+  },
+  async getTrainingHistory(): Promise<any[]> {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/history`);
+      if (!resp.ok) throw new Error(`Backend history error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend training history not available", e);
+      return [];
+    }
+  },
+  async getTrainingConfig(): Promise<any> {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/config`);
+      if (!resp.ok) throw new Error(`Backend config error: ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      console.warn("Backend training config not available", e);
+      return {};
+    }
+  },
+  async updateTrainingConfig(payload: any): Promise<void> {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) throw new Error(`Backend update config error: ${resp.status}`);
+    } catch (e) {
+      console.error("Backend update config failed", e);
+      throw e;
+    }
+  }
+};

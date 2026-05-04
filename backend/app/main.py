@@ -1,55 +1,47 @@
-"""FastAPI app · точка входа."""
-import asyncio
-import sys
-
-import warnings
-import pandas as pd
-
-# Включаем режим Copy-on-Write (убирает ChainedAssignmentError warning в новых версиях)
-pd.options.mode.copy_on_write = True
-
-# На всякий случай полностью скрываем все FutureWarning
-warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# На Windows для asyncio.create_subprocess_exec нужен Proactor event loop.
-# SelectorEventLoop (иногда выбирается под Python 3.14) бросает
-# NotImplementedError при запуске подпроцессов.
-# Надо установить политику ДО инициализации uvicorn-loop.
-if sys.platform == "win32":
-    try:
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    except AttributeError:
-        # На не-Windows или очень старых версиях свойства может не быть
-        pass
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import pipeline, data, metrics, moex
 
-from app.config import settings
-from app.routers import backtest, data, logs, metrics, strategy, training
-
-app = FastAPI(
-    title="Option-Analitik API",
-    description="Backend для UI стратегии Option-Analitik (Si 06.2026)",
-    version="0.1.0",
-)
+app = FastAPI(title="Option Analitik API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(metrics.router)
-app.include_router(data.router)
-app.include_router(strategy.router)
-app.include_router(training.router)
-app.include_router(backtest.router)
-app.include_router(logs.router)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
+# Подключение роутеров
+app.include_router(pipeline.router, prefix="/internal_fastapi/pipeline", tags=["pipeline"])
+app.include_router(data.router, prefix="/internal_fastapi/data", tags=["data"])
+app.include_router(metrics.router, prefix="/internal_fastapi/metrics", tags=["metrics"])
+app.include_router(moex.router, prefix="/internal_fastapi/moex", tags=["moex"])
 
-@app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok", "pipeline_root": str(settings.pipeline_root)}
+# Backward compatibility for old endpoints
+@app.get("/internal_fastapi/options")
+def get_options_legacy(limit: int = 200, instrument: str = None):
+    from app.services.pipeline_service import read_options_board
+    rows = read_options_board(limit=limit, instrument=instrument)
+    return {"rows": rows}
+
+@app.get("/internal_fastapi/instruments")
+def get_instruments_legacy():
+    from app.services.pipeline_service import get_available_instruments
+    instruments = get_available_instruments()
+    return {"instruments": instruments}
+
+@app.get("/internal_fastapi/trades")
+def get_trades_legacy():
+    from app.services.pipeline_service import read_trades
+    trades = read_trades()
+    return {"trades": trades}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=5000, reload=False)
+

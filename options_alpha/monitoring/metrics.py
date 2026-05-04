@@ -132,3 +132,86 @@ class ModelMetrics:
     def get_feature_importance_sorted(self) -> list:
         """Получить важность признаков, отсортированную по убыванию"""
         return sorted(self.feature_importance.items(), key=lambda x: x[1], reverse=True)
+
+
+class ForecastDiagnosticsReport:
+    """Генерация отчетов по качеству прогнозов и сигналам."""
+    
+    def __init__(self, output_dir: str = "."):
+        self.output_dir = output_dir
+        
+    def generate_probability_histogram(self, raw_probs: np.ndarray, calibrated_probs: np.ndarray):
+        """Сохраняет гистограмму вероятностей."""
+        df = pd.DataFrame({
+            "bear_raw": raw_probs[:, 0], "neutral_raw": raw_probs[:, 1], "bull_raw": raw_probs[:, 2],
+            "bear_cal": calibrated_probs[:, 0], "neutral_cal": calibrated_probs[:, 1], "bull_cal": calibrated_probs[:, 2]
+        })
+        df.to_csv(f"{self.output_dir}/probability_histogram.csv", index=False)
+        
+    def generate_class_distribution(self, y_true: np.ndarray, y_pred: np.ndarray):
+        """Сохраняет распределение классов."""
+        df = pd.DataFrame({"y_true": y_true, "y_pred": y_pred})
+        dist_df = df.apply(pd.Series.value_counts).fillna(0)
+        dist_df.to_csv(f"{self.output_dir}/class_distribution.csv")
+        
+    def generate_calibration_curve(self, y_true: np.ndarray, probs: np.ndarray, n_bins: int = 10):
+        """Сохраняет данные для кривой калибровки."""
+        from sklearn.calibration import calibration_curve
+        results = []
+        for c in range(probs.shape[1]):
+            y_bin = (y_true == c).astype(int)
+            prob_true, prob_pred = calibration_curve(y_bin, probs[:, c], n_bins=n_bins, strategy='uniform')
+            for pt, pp in zip(prob_true, prob_pred):
+                results.append({"class": c, "prob_true": pt, "prob_pred": pp})
+        pd.DataFrame(results).to_csv(f"{self.output_dir}/calibration_curve.csv", index=False)
+        
+    def generate_psi_drift(self, expected: np.ndarray, actual: np.ndarray, buckets: int = 10):
+        """Population Stability Index."""
+        def get_psi(e_col, a_col, bins):
+            e_pct = np.histogram(e_col, bins=bins)[0] / len(e_col)
+            a_pct = np.histogram(a_col, bins=bins)[0] / len(a_col)
+            e_pct = np.maximum(e_pct, 0.0001)
+            a_pct = np.maximum(a_pct, 0.0001)
+            return np.sum((e_pct - a_pct) * np.log(e_pct / a_pct))
+
+        bins = np.linspace(min(np.min(expected), np.min(actual)), max(np.max(expected), np.max(actual)), buckets + 1)
+        psi_val = get_psi(expected, actual, bins)
+        pd.DataFrame([{"psi": psi_val}]).to_csv(f"{self.output_dir}/psi_drift.csv", index=False)
+
+    def generate_feature_drift(self, df_train: pd.DataFrame, df_live: pd.DataFrame):
+        """Feature drift (train vs live distributions)."""
+        drift_stats = []
+        for col in df_train.columns:
+            if col in df_live.columns and pd.api.types.is_numeric_dtype(df_train[col]):
+                mean_train = df_train[col].mean()
+                mean_live = df_live[col].mean()
+                std_train = df_train[col].std()
+                drift = np.abs(mean_train - mean_live) / (std_train + 1e-9)
+                drift_stats.append({"feature": col, "drift_score": drift, "mean_train": mean_train, "mean_live": mean_live})
+        
+        pd.DataFrame(drift_stats).to_csv(f"{self.output_dir}/feature_drift.csv", index=False)
+
+    def generate_signal_attribution(self, trades_df: pd.DataFrame):
+        """PnL by strategy type, PnL by regime."""
+        if trades_df.empty: return
+        
+        if "strategy_instance" in trades_df.columns and "pnl" in trades_df.columns:
+            pnl_by_strat = trades_df.groupby("strategy_instance")["pnl"].sum().reset_index()
+            pnl_by_strat.to_csv(f"{self.output_dir}/pnl_by_strategy.csv", index=False)
+            
+        if "regime_class" in trades_df.columns and "pnl" in trades_df.columns:
+            pnl_by_regime = trades_df.groupby("regime_class")["pnl"].sum().reset_index()
+            pnl_by_regime.to_csv(f"{self.output_dir}/pnl_by_regime.csv", index=False)
+
+    def generate_feature_importance(self, model, feature_names: list):
+        """Сохраняет важность признаков."""
+        if hasattr(model, "feature_importances_"):
+            importances = model.feature_importances_
+            df = pd.DataFrame({"feature": feature_names, "importance": importances})
+            df = df.sort_values("importance", ascending=False)
+            df.to_csv(f"{self.output_dir}/feature_importance.csv", index=False)
+            
+    def generate_signal_rejection_stats(self, stats: dict):
+        """Сохраняет статистику отклонения сигналов."""
+        pd.DataFrame([stats]).to_csv(f"{self.output_dir}/signal_rejection_stats.csv", index=False)
+

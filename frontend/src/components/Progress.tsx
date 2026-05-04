@@ -1,20 +1,19 @@
-export function Progress({
-  value,
-  tone = "brand",
-  className = "",
-}: {
-  value: number; // 0..1
-  tone?: "brand" | "success" | "warning" | "danger";
-  className?: string;
-}) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  const color =
-    tone === "success" ? "bg-success" :
-    tone === "warning" ? "bg-warning" :
-    tone === "danger"  ? "bg-danger"  : "bg-brand";
+export function Progress({ value, tone = "brand" }: { value: number; tone?: "brand" | "success" | "warning" | "danger" }) {
+  const safeValue = Math.min(Math.max(value, 0), 100);
+  
+  const bgMap = {
+    brand: "bg-blue-600",
+    success: "bg-emerald-600",
+    warning: "bg-orange-500",
+    danger: "bg-rose-500"
+  };
+
   return (
-    <div className={`h-1.5 bg-bg-2 rounded-full overflow-hidden ${className}`}>
-      <span className={`block h-full ${color}`} style={{ width: `${pct}%` }} />
+    <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+      <div 
+        className={`${bgMap[tone]} h-2.5 rounded-full transition-all duration-500 ease-out`}
+        style={{ width: `${safeValue}%` }}
+      />
     </div>
   );
 }

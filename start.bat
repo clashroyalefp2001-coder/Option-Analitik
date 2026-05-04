@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
 REM  Option-Analitik - единый скрипт запуска
-REM  Запускает FastAPI-бэкенд (порт 8000) и React-фронтенд (5173)
+REM  Запускает FastAPI-бэкенд (порт 8000) и React-фронтенд (3000)
 REM  в отдельных окнах CMD и открывает браузер.
 REM ============================================================
 
@@ -15,7 +15,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "BACKEND=%ROOT%\backend"
 set "FRONTEND=%ROOT%\frontend"
-set "PIPELINE=%ROOT%\Hibrid Condor\options_alpha"
+set "PIPELINE=%ROOT%\options_alpha"
 
 echo.
 echo  ============================================================
@@ -161,25 +161,25 @@ if errorlevel 1 (
 )
 
 echo.
-echo Запускаю фронтенд в новом окне (порт 5173)...
+echo Запускаю фронтенд в новом окне (порт 3000)...
 start "OA Frontend" cmd /k "cd frontend && npm run dev"
 
 echo Жду готовности фронтенда...
-call :WAIT_PORT 5173 60
+call :WAIT_PORT 3000 60
 if errorlevel 1 (
-    echo [ВНИМАНИЕ] Фронтенд не отвечает на :5173 за 60 сек.
+    echo [ВНИМАНИЕ] Фронтенд не отвечает на :3000 за 60 сек.
     echo Если это первый запуск, npm может ещё ставить пакеты в окне фронтенда.
 )
 
 echo.
-echo Открываю браузер: http://localhost:5173
-start "" "http://localhost:5173"
+echo Открываю браузер: http://localhost:3000
+start "" "http://localhost:3000"
 
 echo.
 echo  ============================================================
 echo   UI запущен.
 echo   Бэкенд:    http://localhost:8000   (Swagger: /docs)
-echo   Фронтенд:  http://localhost:5173
+echo   Фронтенд:  http://localhost:3000
 echo.
 echo   Чтобы остановить - закройте окна "Backend" и "Frontend".
 echo  ============================================================

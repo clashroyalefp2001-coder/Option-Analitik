@@ -1,0 +1,31 @@
+18:58:47 [INFO] === Options Trading Alpha Engine ===
+18:58:47 [INFO] Старт: 2026-05-04 18:58:47
+18:58:47 [INFO] Конфиг загружен: config_live.json
+18:58:48 [INFO] --- Switching to FORCAST pipeline mode ---
+18:58:48 [INFO] Fetching market data...
+18:58:49 [WARNING] Data length validation failed: fetched 483 rows, expected >= 1000.
+18:58:49 [INFO] Successfully fetched and validated 483 rows for SiM4.
+18:58:49 [INFO] Market data rows: 483
+18:58:50 [INFO] Backtesting on OOS...
+18:58:54 [ERROR] Forecast pipeline error: 'regime_class'
+Traceback (most recent call last):
+  File "C:\Users\franc\AppData\Roaming\Python\Python314\site-packages\pandas\core\indexes\base.py", line 3805, in get_loc
+    return self._engine.get_loc(casted_key)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
+  File "index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7081, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas\\_libs\\hashtable_class_helper.pxi", line 7089, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'regime_class'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Project\Option Analitik\options_alpha\pipelines\forecast_pipeline.py", line 119, in run
+    day_regime = market_df[market_df["timestamp"] == day_ts]["regime_class"].iloc[0]
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\franc\AppData\Roaming\Python\Python314\site-packages\pandas\core\frame.py", line 4102, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\franc\AppData\Roaming\Python\Python314\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
+    raise KeyError(key) from err
+KeyError: 'regime_class'

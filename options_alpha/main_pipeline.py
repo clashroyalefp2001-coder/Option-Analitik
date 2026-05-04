@@ -54,10 +54,75 @@ def _setup_logging(level: str = "INFO") -> None:
     )
 
 
+def _to_bucket(row: Dict[str, Any] | pd.Series) -> str:
+    """Определяет бакет риска для сделки."""
+    dte = row.get("days_to_expiry", 30)
+    m = row.get("moneyness", 0)
+    t = row.get("type", "call")
+    
+    dte_b = "short" if dte < 10 else ("med" if dte < 45 else "long")
+    # ITM vs OTM
+    is_itm = (m > 0.02) if t == "call" else (m < -0.02)
+    is_otm = (m < -0.02) if t == "call" else (m > 0.02)
+    m_b = "itm" if is_itm else ("otm" if is_otm else "atm")
+    
+    return f"{dte_b}_{m_b}"
+
+
+def _get_empirical_stats(trades_path: str = "reports/trades.csv") -> Dict[str, Any]:
+    """Загружает историческую статистику сделок для калибровки Келли по бакетам."""
+    default_stats = {"win_rate": 0.55, "avg_win": 0.30, "avg_loss": 0.25, "sample_size": 0}
+    try:
+        if not os.path.exists(trades_path):
+            return {"global": default_stats}
+        df = pd.read_csv(trades_path)
+        if df.empty or "pnl" not in df.columns:
+            return {"global": default_stats}
+        
+        df["bucket"] = df.apply(_to_bucket, axis=1)
+        
+        # Calculate normalized PnL (percentage of capital at risk)
+        # Entry cost = entry_price * quantity * multiplier
+        df["entry_notional"] = df["entry_price"] * df["quantity"] * df.get("multiplier", 100.0)
+        df["pnl_pct"] = df["pnl"] / df["entry_notional"]
+        
+        stats = {}
+        # Глобальная стата
+        results = df["pnl_pct"]
+        wins = results[results > 0]
+        losses = results[results < 0].abs()
+        stats["global"] = {
+            "win_rate": len(wins) / len(df) if len(df) > 0 else 0.55,
+            "avg_win": float(wins.mean()) if not wins.empty else 0.3,
+            "avg_loss": float(losses.mean()) if not losses.empty else 0.25,
+            "sample_size": len(df)
+        }
+
+        # Стата по бакетам
+        for bucket, b_df in df.groupby("bucket"):
+            if len(b_df) < 30: continue
+            b_res = b_df["pnl_pct"]
+            b_wins = b_res[b_res > 0]
+            b_losses = b_res[b_res < 0].abs()
+            stats[bucket] = {
+                "win_rate": len(b_wins) / len(b_res),
+                "avg_win": float(b_wins.mean()) if not b_wins.empty else stats["global"]["avg_win"],
+                "avg_loss": float(b_losses.mean()) if not b_losses.empty else stats["global"]["avg_loss"],
+                "sample_size": len(b_df)
+            }
+            
+        return stats
+    except Exception:
+        return {"global": default_stats}
+
+
+
+
 def run_pipeline(
     config_path: str = "config_live.json",
     train_model: bool = True,
     open_report: bool = False,
+    audit: bool = False,
 ) -> int:
     log = logging.getLogger("pipeline")
 
@@ -80,15 +145,25 @@ def run_pipeline(
         from execution.filters.soft import apply_soft_filters
         from execution.sizer.kelly import fractional_kelly
         from backtest.engine import OptionBacktestEngine
+        from backtest.robustness import RobustnessTester
         from monitoring.metrics import compute_kpis
         from config import RISK_CONFIG
+
     except Exception as exc:
         log.exception("Ошибка импорта модулей: %s", exc)
         return 1
 
     risk_cfg = {**RISK_CONFIG, **(config.get("RISK_CONFIG") or {})}
+    pipeline_mode = config.get("pipeline_mode", "legacy")
 
-    # 1. Загрузка данных
+    if pipeline_mode == "forecast":
+        log.info("--- Switching to FORCAST pipeline mode ---")
+        from pipelines.forecast_pipeline import ForecastPipeline
+        pipeline = ForecastPipeline()
+        res = pipeline.run(config)
+        return res.status
+
+    # 1. Загрузка данных (Legacy)
     try:
         log.info("[1/7] Загрузка данных")
 
@@ -133,7 +208,10 @@ def run_pipeline(
         try:
             log.info("[3/7] Обучение модели")
 
-            train_metrics = fit_model(features)
+            horizon = int(risk_cfg.get("target_horizon", 5))
+            log.info("    целевой горизонт: %d бар", horizon)
+            
+            train_metrics = fit_model(features, horizon=horizon)
 
             log.info(
                 "    backend=%s, train_loss=%.6f, val_loss=%.6f, F1=%.3f",
@@ -192,37 +270,62 @@ def run_pipeline(
 
     # 6. Position sizing
     try:
-        log.info("[6/7] Расчёт размеров позиций")
+        log.info("[6/7] Расчёт размеров позиций (Kelly Calibration)")
 
-        budget = 1_000_000.0
-        max_pos = risk_cfg.get("max_position_size_pct", 0.05) * budget
+        # Total portfolio capital
+        portfolio_capital = float(risk_cfg.get("initial_capital", 1_000_000.0))
+        
+        # Kelly Parameters from config
+        kelly_frac_ui = float(risk_cfg.get("kelly_fraction", 0.20))
+        max_pos_pct = float(risk_cfg.get("max_position_size_pct", 0.05))
+        
+        # Global Portfolio Constraint
+        max_gross_deployment_pct = float(risk_cfg.get("max_gross_exposure", 1.0))
+        max_gross_monetary = portfolio_capital * max_gross_deployment_pct
+        current_allocated_monetary = 0.0
 
-        kelly_frac_ui = float(risk_cfg.get("kelly_fraction", 0.25))
-
-        if pd.isna(kelly_frac_ui) or kelly_frac_ui <= 0:
-            log.warning(
-                "Некорректный Kelly fraction — используется 0.25"
-            )
-            kelly_frac_ui = 0.25
+        # Risk Budgeting: Kelly often works best when applied to a "Risk Sleeve" 
+        # Here we use the full capital as the base for Kelly, but our upgraded 
+        # fractional_kelly sizer has internal caps (max_fstar, max_position_pct).
+        
+        # Эмпирическая калибровка
+        emp_stats = _get_empirical_stats()
+        gs = emp_stats["global"]
+        log.info("    калибровка (Global): win_rate=%.2f, avg_win=%.2f, avg_loss=%.2f (n=%d)",
+                 gs['win_rate'], gs['avg_win'], gs['avg_loss'], gs['sample_size'])
+        if len(emp_stats) > 1:
+            log.info("    найдено специфичных бакетов: %d", len(emp_stats) - 1)
 
         sizes = []
 
         for _, row in after_soft.iterrows():
-            edge = float(row.get("predicted_edge", 0.0) or 0.0)
+            # Signal confidence from ML model as the 'p' probability
             conf = float(row.get("signal_confidence", 0.5) or 0.5)
+            multiplier = float(row.get("multiplier", 100.0))
 
-            avg_win = max(edge, 1e-6)
-            avg_loss = max(edge * 0.6, 1e-6)
+            # Выбор бакета статы (Bucketed Kelly)
+            bucket = _to_bucket(row)
+            stats = emp_stats.get(bucket, emp_stats["global"])
+            
+            p = conf
+            w = stats['avg_win']
+            l = stats['avg_loss']
 
+            # Call the upgraded production-grade sizer
             monetary_size = fractional_kelly(
-                edge=edge,
-                win_rate=conf,
-                loss_rate=1 - conf,
-                avg_win=avg_win,
-                avg_loss=avg_loss,
-                budget=max_pos,
+                win_rate=p,
+                avg_win=w,
+                avg_loss=l,
+                budget=portfolio_capital,
                 kelly_frac=kelly_frac_ui,
+                max_position_pct=max_pos_pct,
+                max_fstar=0.20,      # conservative leverage cap
+                min_avg_loss=0.1,    # safety floor for losses (10%)
             )
+
+            # Apply Global Allocation Cap
+            if current_allocated_monetary + monetary_size > max_gross_monetary:
+                monetary_size = max(0.0, max_gross_monetary - current_allocated_monetary)
 
             if pd.isna(monetary_size):
                 monetary_size = 0.0
@@ -239,13 +342,18 @@ def run_pipeline(
                 contracts = 0
             else:
                 try:
-                    contracts = int(monetary_size // option_price)
+                    # FIX: Correct contract calculation using multiplier
+                    contracts = int(monetary_size // (option_price * multiplier))
                 except (ValueError, OverflowError):
                     contracts = 0
 
             if contracts < 1 and monetary_size > 0:
-                contracts = 1
+                # If we have monetary budget but cannot afford 1 contract, we skip
+                # (or could force 1 if it doesn't break max_pos_pct too much)
+                contracts = 0
 
+            # Update tracked allocation
+            current_allocated_monetary += contracts * option_price * multiplier
             sizes.append(float(contracts))
 
         sizes_series = pd.Series(
@@ -269,21 +377,36 @@ def run_pipeline(
         log.info("[7/7] Бэктест")
 
         bt_cfg = config.get("BACKTEST_CONFIG", {}) or {}
+        
+        # Base parameters for engine
+        engine_params = {
+            "initial_capital": float(bt_cfg.get("initial_capital", 1_000_000)),
+            "realized_vol": float(bt_cfg.get("realized_vol", 0.20)),
+            "real_drift": float(bt_cfg.get("real_drift", 0.05)),
+            "n_simulations": int(bt_cfg.get("n_simulations", 100)),
+            "seed": bt_cfg.get("seed", 42),
+            "r": float(bt_cfg.get("r", 0.04)),
+            "dividend": float(bt_cfg.get("dividend", 0.0)),
+            "sigma_for_pricing": bt_cfg.get("sigma_for_pricing"),
+            "stop_loss_pct": bt_cfg.get("stop_loss_pct", 0.5),
+            "take_profit_pct": bt_cfg.get("take_profit_pct", 1.0),
+            "jump_lambda": float(bt_cfg.get("jump_lambda", 0.1)),
+            "market_basis_std": float(bt_cfg.get("market_basis_std", 0.02)),
+            "slippage_pct": float(bt_cfg.get("slippage_pct", 0.001)),
+            "comm_per_contract": float(bt_cfg.get("comm_per_contract", 0.65)),
+        }
 
-        engine = OptionBacktestEngine(
-            initial_capital=float(bt_cfg.get("initial_capital", 1_000_000)),
-            realized_vol=float(bt_cfg.get("realized_vol", 0.20)),
-            n_simulations=int(bt_cfg.get("n_simulations", 100)),
-            seed=bt_cfg.get("seed", 42),
-            r=float(bt_cfg.get("r", 0.04)),
-            dividend=float(bt_cfg.get("dividend", 0.0)),
-            sigma_for_pricing=bt_cfg.get("sigma_for_pricing"),
-            stop_loss_pct=bt_cfg.get("stop_loss_pct", 0.5),
-            take_profit_pct=bt_cfg.get("take_profit_pct", 1.0),
-            binomial_steps=int(bt_cfg.get("binomial_steps", 30)),
-        )
+        engine = OptionBacktestEngine(**engine_params)
 
         engine.run(after_soft, sizes_series)
+
+        # Robustness Audit (Stress testing)
+        if audit:
+            log.info("Starting Robustness Audit...")
+            tester = RobustnessTester(engine_params)
+            tester.run_stress_matrix(after_soft, sizes_series)
+            tester.save_report()
+            log.info("Robustness Audit complete.")
 
         equity_curve = engine.get_equity_curve()
         trades = engine.get_trades()
@@ -383,6 +506,12 @@ def main() -> int:
     parser.add_argument("--open-report", action="store_true")
     parser.add_argument("--log-level", default="INFO")
 
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="Запустить аудит устойчивости (Robustness Stress Matrix)",
+    )
+
     args = parser.parse_args()
 
     _setup_logging(args.log_level)
@@ -391,6 +520,7 @@ def main() -> int:
         config_path=args.config,
         train_model=not args.no_train,
         open_report=args.open_report,
+        audit=args.audit,
     )
 
 

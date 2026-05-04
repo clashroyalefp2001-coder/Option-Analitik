@@ -1,0 +1,29 @@
+00:40:20 [INFO] === Options Trading Alpha Engine ===
+00:40:20 [INFO] Старт: 2026-05-03 00:40:20
+00:40:20 [INFO] Конфиг загружен: config_live.json
+00:40:21 [INFO] [1/7] Загрузка данных
+00:40:21 [INFO]     underlying: 100 записей
+00:40:21 [INFO]     options:    200 записей
+00:40:21 [INFO] [2/7] Feature engineering
+00:40:25 [INFO]     признаков: 28, строк: 200
+00:40:25 [INFO] [3/7] Обучение модели
+00:40:25 [INFO]     целевой горизонт: 5 бар
+00:40:28 [INFO]     backend=lightgbm, train_loss=0.000000, val_loss=0.001635, F1=0.311
+00:40:28 [INFO] [4/7] Применение модели
+00:40:28 [INFO] [5/7] Фильтрация сигналов
+00:40:28 [INFO]     кандидатов: 61
+00:40:28 [INFO]     после hard: 61, после soft: 59
+00:40:28 [INFO] [6/7] Расчёт размеров позиций (Kelly Calibration)
+00:40:28 [INFO]     калибровка (Global): win_rate=0.36, avg_win=1.00, avg_loss=0.36 (n=14)
+00:40:28 [INFO]     средний размер: 29.27 контр., max: 71.00 контр.
+00:40:28 [INFO] [7/7] Бэктест
+00:40:28 [INFO]     кривая капитала: 44 точек, сделок: 15
+00:40:28 [INFO] --- KPI ---
+00:40:28 [INFO]     sharpe_ratio: 4.578
+00:40:28 [INFO]     max_drawdown: -13.9064
+00:40:28 [INFO]     total_return: 0.3369
+00:40:28 [INFO]     hit_rate: 0.7333
+00:40:28 [INFO]     drift: 0.0
+[OptionBacktestEngine] Reports saved to reports/
+00:40:28 [INFO] Отчёты сохранены: reports/
+00:40:28 [INFO] === Пайплайн завершён ===

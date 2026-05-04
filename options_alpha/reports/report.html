@@ -12,6 +12,7 @@
         .kpi-label { font-size: 14px; color: #7f8c8d; margin-top: 5px; }
         .positive { color: #27ae60; }
         .negative { color: #c0392b; }
+        .warning { color: #f39c12; }
         table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; font-size: 13px; }
         th { background-color: #3498db; color: white; }
@@ -19,27 +20,27 @@
 </head>
 <body>
     <h1>Trading Strategy Performance Report (OptionBacktestEngine)</h1>
-    <p>Generated: 2026-04-30 14:33:18</p>
+    <p>Generated: 2026-05-04 10:57:41</p>
     <div class="kpi-grid">
         <div class="kpi-card">
-            <div class="kpi-value positive">0.0000</div>
+            <div class="kpi-value positive">0.2728</div>
             <div class="kpi-label">Total Return</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value negative">0.0000</div>
+            <div class="kpi-value negative">-7.2744</div>
             <div class="kpi-label">Max Drawdown (%)</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value negative">0.0000</div>
-            <div class="kpi-label">Hit Rate</div>
+            <div class="kpi-value warning">99.47%</div>
+            <div class="kpi-label">Peak Margin Usage</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-value">0</div>
-            <div class="kpi-label">Total Trades</div>
+            <div class="kpi-value">12 / 16</div>
+            <div class="kpi-label">Executed / Total (75.0%)</div>
         </div>
     </div>
-    <h3>Параметры симуляции</h3><ul><li><b>n_simulations</b>: 100</li><li><b>realized_vol</b>: 0.2</li><li><b>stop_loss_pct</b>: 0.5</li><li><b>take_profit_pct</b>: 1.0</li></ul>
+    <h3>Параметры симуляции</h3><ul><li><b>n_simulations</b>: 100</li><li><b>realized_vol</b>: 0.2</li><li><b>stop_loss_pct</b>: 0.5</li><li><b>take_profit_pct</b>: 1.0</li><li><b>peak_margin_utilization</b>: 99.47%</li></ul>
     <h2>Trade Details</h2>
-    <p>No trades</p>
+    <table><tr><th>entry_date</th><th>exit_date</th><th>type</th><th>side</th><th>quantity</th><th>entry_price</th><th>pnl</th><th>expected_pnl</th><th>return</th><th>exit_reason</th><th>win_rate_sim</th></tr><tr><td>2024-01-05 00:00:00</td><td>NaT</td><td>call</td><td>sell</td><td>69.0</td><td>5.739065368831449</td><td class=''>0.0</td><td>22595.541321296627</td><td>0.0</td><td>skipped (no BP)</td><td>0.81</td></tr><tr><td>2024-01-05 00:00:00</td><td>NaT</td><td>call</td><td>sell</td><td>70.0</td><td>5.672087808221471</td><td class=''>0.0</td><td>22450.49806959217</td><td>0.0</td><td>skipped (no BP)</td><td>0.81</td></tr><tr><td>2024-01-02 00:00:00</td><td>2024-01-08 00:00:00</td><td>call</td><td>sell</td><td>71.0</td><td>5.583050518433446</td><td class='positive'>5414.076663265172</td><td>13607.298452273684</td><td>0.02788310057083042</td><td>liquidation</td><td>0.64</td></tr><tr><td>2024-01-09 00:00:00</td><td>NaT</td><td>call</td><td>sell</td><td>69.0</td><td>5.7233738797403575</td><td class=''>0.0</td><td>14928.372157169226</td><td>0.0</td><td>skipped (no BP)</td><td>0.69</td></tr><tr><td>2024-01-10 00:00:00</td><td>NaT</td><td>call</td><td>sell</td><td>69.0</td><td>5.77973548101677</td><td class=''>0.0</td><td>8486.412136675395</td><td>0.0</td><td>skipped (no BP)</td><td>0.58</td></tr><tr><td>2024-01-13 00:00:00</td><td>2024-01-13 00:00:00</td><td>call</td><td>sell</td><td>69.0</td><td>5.74230580207687</td><td class='negative'>-148.90477508582262</td><td>12127.03236447027</td><td>-0.0007826432777861642</td><td>liquidation</td><td>0.63</td></tr><tr><td>2024-01-12 00:00:00</td><td>2024-01-18 00:00:00</td><td>call</td><td>sell</td><td>72.0</td><td>5.512327552547907</td><td class='negative'>-7984.936361585453</td><td>5378.129149097408</td><td>-0.04025869751495636</td><td>liquidation</td><td>0.54</td></tr><tr><td>2024-01-11 00:00:00</td><td>2024-01-20 00:00:00</td><td>call</td><td>sell</td><td>70.0</td><td>5.686782261961119</td><td class='positive'>2161.2359621602955</td><td>8815.412765765848</td><td>0.011165301381113756</td><td>liquidation</td><td>0.58</td></tr><tr><td>2024-01-01 00:00:00</td><td>2024-01-31 00:00:00</td><td>call</td><td>sell</td><td>72.0</td><td>5.544229231038154</td><td class='positive'>39871.6504634747</td><td>16369.895280349894</td><td>0.20359401791893633</td><td>expiry</td><td>0.7</td></tr><tr><td>2024-01-04 00:00:00</td><td>2024-02-03 00:00:00</td><td>call</td><td>sell</td><td>70.0</td><td>5.675092688615797</td><td class='positive'>39680.14882031058</td><td>16399.99954685415</td><td>0.20722412938484167</td><td>expiry</td><td>0.69</td></tr><tr><td>2024-01-19 00:00:00</td><td>2024-02-03 00:00:00</td><td>call</td><td>buy</td><td>12.0</td><td>5.720658073227969</td><td class='negative'>-4308.719381926763</td><td>-2547.4950761182695</td><td>-0.6276549723785395</td><td>stop_loss</td><td>0.16</td></tr><tr><td>2024-01-05 00:00:00</td><td>2024-02-04 00:00:00</td><td>call</td><td>sell</td><td>71.0</td><td>5.572952346100751</td><td class='positive'>39521.81165731533</td><td>21912.602792538153</td><td>0.20638515918225134</td><td>expiry</td><td>0.8</td></tr><tr><td>2024-01-05 00:00:00</td><td>2024-02-04 00:00:00</td><td>call</td><td>sell</td><td>70.0</td><td>5.703289130067178</td><td class='positive'>39877.52391047025</td><td>22438.912261561007</td><td>0.21015128287409404</td><td>expiry</td><td>0.8</td></tr><tr><td>2024-01-06 00:00:00</td><td>2024-02-05 00:00:00</td><td>call</td><td>sell</td><td>68.0</td><td>5.7959404108448656</td><td class='positive'>39368.19479374509</td><td>17611.255543820927</td><td>0.21066036251070464</td><td>expiry</td><td>0.74</td></tr><tr><td>2024-01-09 00:00:00</td><td>2024-02-08 00:00:00</td><td>call</td><td>sell</td><td>68.0</td><td>5.838210254334312</td><td class='positive'>39655.62972947332</td><td>15182.012952898278</td><td>0.21052178961327495</td><td>expiry</td><td>0.69</td></tr><tr><td>2024-01-10 00:00:00</td><td>2024-02-09 00:00:00</td><td>call</td><td>sell</td><td>68.0</td><td>5.83993312176988</td><td class='positive'>39667.345228035185</td><td>8882.210187615541</td><td>0.20951109604983797</td><td>expiry</td><td>0.58</td></tr></table>
 </body>
 </html>

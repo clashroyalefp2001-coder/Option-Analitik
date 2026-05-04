@@ -1,27 +1,13 @@
 # execution/filters/soft.py
-"""Soft фильтры на основе качества сигнала и рыночного режима."""
-
-
-def apply_soft_filters(df, config):
-    """
-    Отбирает сигналы, у которых:
-      - predicted_edge > execution_cost
-      - confidence >= threshold
-      - regime не stress
-    """
-    df = df.copy()
-    # 1) Edge filter
-    edge_mask = df["predicted_edge"] >= config["min_edge"]
-    # 2) Confidence filter
-    conf_mask = df["signal_confidence"] >= config["min_confidence"]
-    # 3) Regime filter: если stress, уменьшаем размер позиции
-    regime_ok = df["signal_regime"] != "stress" 
-
-    mask = edge_mask & conf_mask 
-    filtered = df[mask].copy()
+def apply_soft_filters(df, risk_cfg):
+    """Сортировка и мягкая фильтрация по уверенности и edge."""
+    if df.empty: return df
+    res = df.copy()
     
-    # БЕЗОПАСНАЯ перезапись колонок через assign для устранения ChainedAssignmentError
-    needs_reduction = df.loc[mask.index, "signal_regime"] == "stress"
-    filtered = filtered.assign(needs_size_reduction=needs_reduction)
+    min_edge = risk_cfg.get("min_edge", 0.0)
+    res = res[res["predicted_edge"] > min_edge]
     
-    return filtered
+    # Сортируем по убыванию edge
+    res = res.sort_values("predicted_edge", ascending=False)
+    
+    return res

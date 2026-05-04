@@ -1,8 +1,14 @@
-pandas
-numpy
-scikit-learn
-joblib
-lightgbm
-pyarrow
-streamlit
-plotly
+# Root requirements for the entire Option Analitik project
+fastapi<1.0,>=0.115
+uvicorn[standard]<1.0,>=0.32
+pydantic<3.0,>=2.9
+pydantic-settings<3.0,>=2.6
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1
+sse-starlette>=2.1
+python-multipart>=0.0.12
+requests
+aiohttp
+scipy
+pathlib

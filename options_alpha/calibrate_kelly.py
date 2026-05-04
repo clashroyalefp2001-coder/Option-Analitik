@@ -21,19 +21,31 @@ def calibrate(trades_path: str = "reports/trades.csv") -> dict:
     if df.empty or "pnl" not in df.columns:
         raise ValueError("Нет колонки 'pnl' или нет данных в trades.csv")
 
-    wins = df[df["pnl"] > 0]["pnl"]
-    losses = df[df["pnl"] < 0]["pnl"].abs()
+    # Calculate normalized PnL (percentage of capital at risk)
+    df["entry_notional"] = df["entry_price"] * df["quantity"] * df.get("multiplier", 100.0)
+    df["pnl_pct"] = df["pnl"] / df["entry_notional"]
+
+    wins = df[df["pnl_pct"] > 0]["pnl_pct"]
+    losses = df[df["pnl_pct"] < 0]["pnl_pct"].abs()
 
     win_rate = len(wins) / len(df) if len(df) else 0.0
     avg_win = float(wins.mean()) if len(wins) else 0.0
     avg_loss = float(losses.mean()) if len(losses) else 0.0
 
-    if avg_loss == 0 or win_rate == 0:
+    # Constants to match production sizer
+    MIN_AVG_LOSS = 0.10
+    MAX_WIN_RATE = 0.80
+
+    # Regularization for calibration
+    reg_win_rate = min(win_rate, MAX_WIN_RATE)
+    reg_avg_loss = max(avg_loss, MIN_AVG_LOSS)
+
+    if reg_avg_loss == 0 or reg_win_rate == 0:
         full_kelly = 0.0
     else:
-        b = avg_win / avg_loss
+        b = avg_win / reg_avg_loss
         # Классический Kelly: f* = (p*b - q) / b
-        full_kelly = (win_rate * b - (1 - win_rate)) / b
+        full_kelly = (reg_win_rate * b - (1 - reg_win_rate)) / b
 
     # Рекомендации по доле full Kelly:
     # 0.25 — консервативно, 0.5 — агрессивно

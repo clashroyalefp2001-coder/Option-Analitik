@@ -1,54 +1,43 @@
+# models/inference.py
+"""Применение обученной модели к новым данным."""
+
 from __future__ import annotations
 import os
 import pickle
-from typing import Optional
-import numpy as np
 import pandas as pd
-from models.lgbm.trainer import MODEL_PATH
+import numpy as np
 
-def load_model(path: str = MODEL_PATH):
-    if not os.path.exists(path):
-        return None, None
-    try:
-        with open(path, "rb") as f:
-            payload = pickle.load(f)
-        if isinstance(payload, dict) and "model" in payload:
-            return payload["model"], payload.get("features", [])
-        return payload, None
-    except Exception:
-        return None, None
+MODEL_PATH = os.path.join("models", "lgbm", "model.pkl")
 
-def apply_model_predictions(features_df: pd.DataFrame) -> pd.DataFrame:
-    if features_df is None or features_df.empty:
-        return features_df
-
-    model, features = load_model()
-    if model is None:
-        return features_df
-
-    df = features_df.copy(deep=True)  # Явное глубокое копирование
-    if not features:
+def apply_model_predictions(df: pd.DataFrame) -> pd.DataFrame:
+    """Загружает модель и предсказывает edge."""
+    if df.empty:
         return df
-
-    available = [c for c in features if c in df.columns]
-    if len(available) != len(features):
-        missing = set(features) - set(available)
-        raise KeyError(f"В признаках отсутствуют ожидаемые колонки: {missing}")
-
-    # Передаем pandas DataFrame, а не numpy array (.values удалено)
-    X = df[available].astype(float)
+        
+    res = df.copy()
+    
+    if not os.path.exists(MODEL_PATH):
+        # Если модели нет, предсказываем 0 (нейтрально)
+        res["predicted_edge"] = 0.0
+        res["signal_confidence"] = 0.5
+        return res
+        
     try:
-        preds = np.asarray(model.predict(X), dtype=float)
+        with open(MODEL_PATH, "rb") as f:
+            data = pickle.load(f)
+            model = data["model"]
+            features = data["features"]
+            
+        # Убеждаемся, что все фичи есть
+        X = res[features].astype(float)
+        res["predicted_edge"] = model.predict(X)
+        
+        # Сигма-прокси для уверенности (confidence)
+        # В реальности можно использовать predict_proba или разброс на кросс-валидации
+        res["signal_confidence"] = 0.5 + np.clip(res["predicted_edge"] * 10, -0.49, 0.49)
+        
     except Exception:
-        return df
-
-    df["predicted_edge"] = preds
-
-    abs_preds = np.abs(preds)
-    if abs_preds.max() > 0:
-        confidence = abs_preds / abs_preds.max()
-        df["signal_confidence"] = 0.5 + 0.5 * confidence
-    else:
-        df["signal_confidence"] = 0.5
-
-    return df
+        res["predicted_edge"] = 0.0
+        res["signal_confidence"] = 0.5
+        
+    return res

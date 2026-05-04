@@ -1,131 +1,84 @@
-import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
-
-import { Topbar, StatusPill } from "../components/Topbar";
-import { Card } from "../components/Card";
+import { useEffect, useState, useRef } from "react";
+import { Topbar } from "../components/Topbar";
+import { Terminal, CheckCircle2, RefreshCw, Play } from "lucide-react";
 import { api } from "../lib/api";
-import { useHotkeys } from "../hooks/useHotkeys";
 
-type Level = "all" | "info" | "warn" | "err";
+export const Logs = () => {
+  const [pipelineStatus, setPipelineStatus] = useState<any>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [runPipelineLoading, setRunPipelineLoading] = useState(false);
+  const [runPipelineSuccess, setRunPipelineSuccess] = useState(false);
 
-function classifyLine(line: string): "info" | "warn" | "err" | "ok" {
-  const s = line.toUpperCase();
-  if (s.includes("[ERROR]") || s.includes("ERR")) return "err";
-  if (s.includes("[WARN]") || s.includes("WARNING")) return "warn";
-  if (s.includes("[OK]") || s.includes("ЗАВЕРШЁН")) return "ok";
-  return "info";
-}
-
-export function Logs() {
-  const [lines, setLines] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [filter, setFilter] = useState("");
-  const [level, setLevel] = useState<Level>("all");
-  const tailRef = useRef<HTMLDivElement>(null);
-
-  async function load() {
-    const r = await api.logsTail(500);
-    setLines(r.lines);
-    setRunning(r.running);
-  }
   useEffect(() => {
-    load();
-    const id = setInterval(load, 800);
+    const checkPipeline = async () => {
+      try {
+        const status = await api.getPipelineStatus();
+        setPipelineStatus(status);
+        if (status?.running) {
+          setRunPipelineLoading(true);
+        } else if (runPipelineLoading) {
+          setRunPipelineLoading(false);
+          setRunPipelineSuccess(true);
+          setTimeout(() => setRunPipelineSuccess(false), 3000);
+        }
+      } catch(e) {
+        // ignore initially
+      }
+    };
+    checkPipeline();
+    const id = setInterval(checkPipeline, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [runPipelineLoading]);
 
   useEffect(() => {
-    tailRef.current?.scrollTo({ top: tailRef.current.scrollHeight });
-  }, [lines]);
+    if (logsEndRef.current) {
+        logsEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [pipelineStatus?.log_tail]);
 
-  function clear() { setLines([]); }
-  useHotkeys({ "mod+l": () => clear() });
-
-  const filtered = lines.filter(l => {
-    if (filter && !l.toLowerCase().includes(filter.toLowerCase())) return false;
-    if (level === "all") return true;
-    const k = classifyLine(l);
-    return level === "info" ? k === "info" || k === "ok" :
-           level === "warn" ? k === "warn" :
-           k === "err";
-  });
+  async function runPipeline() {
+    setRunPipelineLoading(true);
+    setRunPipelineSuccess(false);
+    try {
+      await api.runBacktest(false);
+    } catch (e) {
+      console.error(e);
+      setRunPipelineLoading(false);
+    }
+  }
 
   return (
     <>
-      <Topbar
-        title="Логи"
-        status={
-          <StatusPill tone={running ? "warn" : "ok"}>
-            {running ? "Streaming · в работе" : `Простой · ${lines.length} строк`}
-          </StatusPill>
-        }
-      >
-        <input
-          className="input"
-          placeholder="Поиск…"
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          style={{ width: 220 }}
-        />
-        <Toggle value={level} onChange={setLevel} options={[
-          { value: "all", label: "Все" },
-          { value: "info", label: "Info" },
-          { value: "warn", label: "Warn" },
-          { value: "err", label: "Error" },
-        ]} />
-        <button className="btn btn-ghost" onClick={clear}>
-          <Trash2 size={16} /> Очистить <span className="kbd">⌘L</span>
+      <Topbar title="Логи">
+        <button 
+            className={`btn ${runPipelineSuccess ? '!bg-success !text-white !border-success' : 'btn-primary'}`} 
+            onClick={runPipeline}
+            disabled={runPipelineLoading}
+        >
+            {runPipelineSuccess ? <CheckCircle2 size={16} /> : runPipelineLoading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
+            {runPipelineSuccess ? "Завершено" : runPipelineLoading ? "В процессе..." : "Запустить пайплайн"}
         </button>
       </Topbar>
-
-      <main className="p-8">
-        <Card className="!p-0 overflow-hidden">
-          <div
-            ref={tailRef}
-            className="font-mono text-[12.5px] leading-7 px-4 py-4 h-[640px] overflow-auto"
-            style={{ background: "#0A0E14" }}
-          >
-            {filtered.length === 0 && (
-              <div className="text-text-3">Лог пуст. Запустите пайплайн на экране «Бэктест».</div>
-            )}
-            {filtered.map((l, i) => {
-              const k = classifyLine(l);
-              const cls =
-                k === "err" ? "text-danger" :
-                k === "warn" ? "text-warning" :
-                k === "ok"  ? "text-success" :
-                                "text-brand-2";
-              return (
-                <div key={i}>
-                  <span className={cls}>{l}</span>
+      <main className="p-8 h-[calc(100vh-70px)] flex flex-col">
+        <div className="bg-[#1e1e1e] border border-gray-800 rounded-xl w-full shadow-2xl flex flex-col flex-1 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-[#252526] border-b border-gray-800">
+                <div className="flex items-center gap-2 text-gray-300 text-sm font-medium">
+                    <Terminal size={16} />
+                    Выполнение пайплайна
                 </div>
-              );
-            })}
-          </div>
-        </Card>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 font-mono text-[13px] leading-relaxed text-green-400 bg-[#1e1e1e]">
+               {pipelineStatus?.log_tail?.map((log: string, i: number) => (
+                   <div key={i} className="whitespace-pre-wrap">{log}</div>
+               ))}
+               {!pipelineStatus?.running && (!pipelineStatus?.log_tail || pipelineStatus.log_tail.length === 0) && (
+                   <div className="text-gray-500 italic">Логи появятся при запуске...</div>
+               )}
+               {pipelineStatus?.running && <div className="text-gray-500 animate-pulse mt-2">_</div>}
+               <div ref={logsEndRef} />
+            </div>
+        </div>
       </main>
     </>
-  );
-}
-
-function Toggle<T extends string>({
-  value, onChange, options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: string }[];
-}) {
-  return (
-    <div className="inline-flex bg-bg-2 border border-border rounded-sm p-0.5">
-      {options.map(o => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          className={`px-4 py-1.5 rounded text-[13px] ${value === o.value ? "bg-bg-0 text-text-1 shadow" : "text-text-2"}`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
   );
 }

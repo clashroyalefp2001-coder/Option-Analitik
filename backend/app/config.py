@@ -1,34 +1,33 @@
-"""Настройки backend: пути, CORS, окружение."""
-from __future__ import annotations
-
+import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
 
-# Корень репозитория: C:\Project\Option Analitik
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PIPELINE_ROOT = REPO_ROOT / "options_alpha"
-
-class Settings(BaseSettings):
-    repo_root: Path = REPO_ROOT
-    pipeline_root: Path = PIPELINE_ROOT
-    reports_dir: Path = PIPELINE_ROOT / "reports"
-    config_path: Path = PIPELINE_ROOT / "config_live.json"
-    model_meta_path: Path = PIPELINE_ROOT / "models" / "lgbm" / "model_meta.json"
-    metrics_path: Path = PIPELINE_ROOT / "reports" / "model_metrics.json"
-    logs_dir: Path = REPO_ROOT / "backend" / "logs"
-    
-    # Жесткий путь к файлу с данными из QUIK
-    tsv_data_path: Path = REPO_ROOT / "data" / "option_export.tsv"
-
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-    ]
-
-    class Config:
-        env_prefix = "OA_"
+class Settings:
+    def __init__(self):
+        # Определение базовых путей
+        # config.py находится в /backend/app/config.py
+        self.app_dir = Path(__file__).resolve().parent      # /backend/app
+        self.backend_dir = self.app_dir.parent             # /backend
+        self.root_dir = self.backend_dir.parent           # / (корень проекта)
+        
+        # options_alpha лежит в корне проекта
+        self.pipeline_root = self.root_dir / "options_alpha"
+        
+        # Директории для отчетов и логов внутри options_alpha
+        self.reports_dir = self.pipeline_root / "reports"
+        self.logs_dir = self.pipeline_root / "logs"
+        self.models_dir = self.pipeline_root / "models"
+        
+        # Пути к файлам конфигурации и метаданных
+        self.config_path = self.pipeline_root / "config.json"
+        self.metrics_path = self.reports_dir / "metrics.json"
+        self.model_meta_path = self.models_dir / "model_meta.json"
+        
+        # Путь к данным (опционально)
+        self.tsv_data_path = self.pipeline_root / "option_export.tsv"
+        
+        # Создание папок, если их нет
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.models_dir.mkdir(parents=True, exist_ok=True)
 
 settings = Settings()
-settings.logs_dir.mkdir(parents=True, exist_ok=True)
-(settings.repo_root / "data").mkdir(parents=True, exist_ok=True)
