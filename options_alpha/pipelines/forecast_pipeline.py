@@ -223,21 +223,21 @@ class ForecastPipeline:
             all_signals["size"] = 10.0
             engine.run(all_signals, all_signals["size"])
             
-            kpis = engine.get_kpis()
-            self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
-            engine.save_reports()
-            
-            # Обновляем Kelly-статистику на основе OOS-сделок
-            update_kelly_stats_from_oos_trades(engine.trades)
-            
-            # Возвращаем структурированный результат
-            return ForecastPipelineResult(
-                fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
-                oos_predictions=pd.DataFrame(),  # Placeholder for actual OOS predictions
-                thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
-                calibration_metrics={},  # Placeholder for calibration metrics
-                selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
-            )
+             kpis = engine.get_kpis()
+             self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
+             engine.save_reports()
+             
+             # Обновляем Kelly-статистику на основе OOS-сделок
+             update_kelly_stats_from_oos_trades(engine.trades)
+             
+             # Возвращаем структурированный результат
+             return ForecastPipelineResult(
+                 fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
+                 oos_predictions=pd.DataFrame(),
+                 thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
+                 calibration_metrics={},
+                 selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
+             )
             all_signals["size"] = 10.0
             engine.run(all_signals, all_signals["size"])
             

@@ -1,5 +1,5 @@
 {
-    "pipeline_mode": "legacy",
+    "pipeline_mode": "forecast",
     "RISK_CONFIG": {
         "initial_capital": 1000000.0,
         "target_horizon": 5,
