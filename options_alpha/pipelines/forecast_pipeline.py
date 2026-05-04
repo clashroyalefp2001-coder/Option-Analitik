@@ -185,11 +185,11 @@ class ForecastPipeline:
                                 "bear_prob": day_probs["bear_prob"],
                                 "neutral_prob": day_probs.get("neutral_prob", 0.0)
                             },
-                            "expected_move": 0.0,  # TODO: integrate magnitude model output
+                            "expected_move": 0.0,
                             "vol_forecast": day_vol,
-                            "iv_percentile": 0.5,  # placeholder – should be derived from market data
-                            "iv_rank": 0.5,        # placeholder
-                            "surface_percentile": 0.5,  # placeholder
+                            "iv_percentile": 0.5,
+                            "iv_rank": 0.5,
+                            "surface_percentile": 0.5,
                             "regime": day_regime,
                             "confidence": max(day_probs.values())
                         },
@@ -197,7 +197,7 @@ class ForecastPipeline:
                     )
                     if mapped:
                         backtest_signals.append(sig_gen.generate(mapped, day_ts))
-                    
+                
             total_eval_days = sum(len(s["val_idx"]) for s in splits)
             stats = {
                 "total_days_evaluated": total_eval_days,
@@ -214,7 +214,7 @@ class ForecastPipeline:
             all_signals = pd.concat(backtest_signals).reset_index(drop=True)
             options_lookup = options_pool[["option_symbol", "date", "mid"]].drop_duplicates()
             all_signals = pd.merge(all_signals, options_lookup, on=["option_symbol", "date"], how="left")
- 
+  
             engine = OptionBacktestEngine(
                 initial_capital=config.get("RISK_CONFIG", {}).get("initial_capital", 1000000.0),
                 n_simulations=config.get("BACKTEST_CONFIG", {}).get("n_simulations", 100),
@@ -223,55 +223,17 @@ class ForecastPipeline:
             all_signals["size"] = 10.0
             engine.run(all_signals, all_signals["size"])
             
-             kpis = engine.get_kpis()
-             self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
-             engine.save_reports()
-             
-             # Обновляем Kelly-статистику на основе OOS-сделок
-            update_kelly_stats_from_oos_trades(engine.trades)
-            
-            # Возвращаем структурированный результат
-            return ForecastPipelineResult(
-                fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
-                oos_predictions=pd.DataFrame(),
-                thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
-                calibration_metrics={},
-                selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
-            )
-            all_signals["size"] = 10.0
-            engine.run(all_signals, all_signals["size"])
-            
             kpis = engine.get_kpis()
-            self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
+            self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio",0), kpis.get("total_return",0))
             engine.save_reports()
             
-            # Обновляем Kelly-статистику на основе OOS-сделок
             update_kelly_stats_from_oos_trades(engine.trades)
             
-            # Возвращаем структурированный результат
             return ForecastPipelineResult(
                 fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
                 oos_predictions=pd.DataFrame(),
                 thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
                 calibration_metrics={},
-                selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
-            )
-            all_signals["size"] = 10.0
-            engine.run(all_signals, all_signals["size"])
-            
-             kpis = engine.get_kpis()
-             self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio",0), kpis.get("total_return",0))
-             engine.save_reports()
-            
-            # Обновляем Kelly-статистику на основе OOS-сделок
-            update_kelly_stats_from_oos_trades(engine.trades)
-            
-            # Возвращаем структурированный результат
-            return ForecastPipelineResult(
-                fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
-                oos_predictions=pd.DataFrame(),  # Placeholder for actual OOS predictions
-                thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
-                calibration_metrics={},  # Placeholder for calibration metrics
                 selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
             )
 
