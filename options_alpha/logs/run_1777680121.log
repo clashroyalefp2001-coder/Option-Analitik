@@ -1,9 +1,0 @@
-03:02:02 [INFO] === Options Trading Alpha Engine ===
-03:02:02 [INFO] Старт: 2026-05-02 03:02:02
-03:02:02 [INFO] Конфиг загружен: config_live.json
-03:02:05 [INFO] [1/7] Загрузка данных
-03:02:05 [INFO]     underlying: 100 записей
-03:02:05 [INFO]     options:    200 записей
-03:02:05 [INFO] [2/7] Feature engineering
-03:02:05 [INFO]     признаков: 0, строк: 0
-03:02:05 [WARNING] После очистки признаков не осталось — выход

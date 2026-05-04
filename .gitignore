@@ -1,0 +1,11 @@
+# Игнорировать конкретные файлы в папке data
+data/option_export.tsv
+data/option_export.tmp
+
+# Временные файлы
+FETCH_HEAD
+options_alpha/logs/
+
+# Другие временные файлы проекта
+*.log
+*.tmp
