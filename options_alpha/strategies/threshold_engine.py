@@ -1,9 +1,21 @@
+import warnings
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
+warnings.warn(
+    "ThresholdEngine is deprecated. Use ThresholdOptimizer from threshold_optimizer instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 class ThresholdEngine:
     def __init__(self, base_percentile: float = 80.0, min_history: int = 50, default_threshold: float = 0.60):
+        warnings.warn(
+            "ThresholdEngine is deprecated. Use ThresholdOptimizer instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.base_percentile = base_percentile
         self.min_history = min_history
         self.default_threshold = default_threshold

@@ -57,6 +57,14 @@ def update_kelly_stats_from_oos_trades(trades: list, store_path: str = "storage/
     store.save(stats)
 
 
+@dataclass
+class ForecastPipelineResult:
+    fold_metrics: list
+    oos_predictions: pd.DataFrame
+    thresholds: dict
+    calibration_metrics: dict
+    selected_trades: pd.DataFrame
+
 class ForecastPipeline:
     def __init__(self):
         self.log = logging.getLogger("forecast_pipeline")
@@ -172,13 +180,20 @@ class ForecastPipeline:
                     mapper = ForecastStrategyMapper(bull_t, bear_t)
                     mapped = mapper.map_forecast_to_structure(
                         {
-                            "direction": "bull" if day_probs["bull_prob"] > bull_t else "bear" if day_probs["bear_prob"] > bear_t else "neutral",
-                            "expected_move": 0.0, # Placeholder needs magnitude head
-                            "expected_vol": day_vol,
+                            "direction_probs": {
+                                "bull_prob": day_probs["bull_prob"],
+                                "bear_prob": day_probs["bear_prob"],
+                                "neutral_prob": day_probs.get("neutral_prob", 0.0)
+                            },
+                            "expected_move": 0.0,  # TODO: integrate magnitude model output
+                            "vol_forecast": day_vol,
+                            "iv_percentile": 0.5,  # placeholder – should be derived from market data
+                            "iv_rank": 0.5,        # placeholder
+                            "surface_percentile": 0.5,  # placeholder
                             "regime": day_regime,
                             "confidence": max(day_probs.values())
                         },
-                        chain=day_chain
+                        chain_snapshot=day_chain
                     )
                     if mapped:
                         backtest_signals.append(sig_gen.generate(mapped, day_ts))
@@ -208,14 +223,21 @@ class ForecastPipeline:
             all_signals["size"] = 10.0
             engine.run(all_signals, all_signals["size"])
             
-            kpis = engine.get_kpis()
-            self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
-            engine.save_reports()
-            
-            # Обновляем Kelly-статистику на основе OOS-сделок
-            update_kelly_stats_from_oos_trades(engine.trades)
-            
-            return PipelineResult(status=0, message="Success", metrics={**artifact.metrics, **kpis})
+             kpis = engine.get_kpis()
+             self.log.info("Backtest results: Sharpe=%.2f, Return=%.2f", kpis.get("sharpe_ratio", 0), kpis.get("total_return", 0))
+             engine.save_reports()
+             
+             # Обновляем Kelly-статистику на основе OOS-сделок
+             update_kelly_stats_from_oos_trades(engine.trades)
+             
+             # Возвращаем структурированный результат
+             return ForecastPipelineResult(
+                 fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
+                 oos_predictions=pd.DataFrame(),  # Placeholder for actual OOS predictions
+                 thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
+                 calibration_metrics={},  # Placeholder for calibration metrics
+                 selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
+             )
 
         except Exception as exc:
             self.log.exception("Forecast pipeline error: %s", exc)
