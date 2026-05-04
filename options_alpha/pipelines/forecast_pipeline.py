@@ -228,16 +228,16 @@ class ForecastPipeline:
              engine.save_reports()
              
              # Обновляем Kelly-статистику на основе OOS-сделок
-             update_kelly_stats_from_oos_trades(engine.trades)
-             
-             # Возвращаем структурированный результат
-             return ForecastPipelineResult(
-                 fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
-                 oos_predictions=pd.DataFrame(),
-                 thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
-                 calibration_metrics={},
-                 selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
-             )
+            update_kelly_stats_from_oos_trades(engine.trades)
+            
+            # Возвращаем структурированный результат
+            return ForecastPipelineResult(
+                fold_metrics=[artifact.metrics] if hasattr(artifact, 'metrics') else [],
+                oos_predictions=pd.DataFrame(),
+                thresholds={"bull_t": bull_t, "bear_t": bear_t} if 'bull_t' in locals() else {},
+                calibration_metrics={},
+                selected_trades=pd.DataFrame(engine.trades) if engine.trades else pd.DataFrame()
+            )
             all_signals["size"] = 10.0
             engine.run(all_signals, all_signals["size"])
             
