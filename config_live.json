@@ -1,0 +1,28 @@
+{
+    "pipeline_mode": "legacy",
+    "RISK_CONFIG": {
+        "initial_capital": 1000000.0,
+        "target_horizon": 5,
+        "kelly_fraction": 0.20,
+        "max_position_size_pct": 0.05,
+        "max_gross_exposure": 1.0,
+        "max_delta_exposure": 0.2,
+        "max_vega_exposure": 0.3
+    },
+    "BACKTEST_CONFIG": {
+        "initial_capital": 1000000.0,
+        "realized_vol": 0.20,
+        "real_drift": 0.05,
+        "n_simulations": 100,
+        "seed": 42,
+        "r": 0.04,
+        "dividend": 0.0,
+        "sigma_for_pricing": 0.25,
+        "stop_loss_pct": 0.5,
+        "take_profit_pct": 1.0,
+        "jump_lambda": 0.1,
+        "market_basis_std": 0.02,
+        "slippage_pct": 0.001,
+        "comm_per_contract": 0.65
+    }
+}

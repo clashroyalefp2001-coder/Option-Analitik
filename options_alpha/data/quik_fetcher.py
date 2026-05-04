@@ -16,11 +16,18 @@ def load_underlying() -> pd.DataFrame:
 
 def load_option_quotes() -> pd.DataFrame:
     """Загрузка котировок опционов."""
-    path = os.path.join("data", "option_export.tsv")
-    if os.path.exists(path):
-        return pd.read_csv(path, sep='\t')
-        
-    raise FileNotFoundError(f"Options quotes file not found: {path}. Synthetic data disabled.")
+    # Try multiple possible paths for flexibility
+    possible_paths = [
+        os.path.join("data", "option_export.tsv"),
+        os.path.join("..", "data", "option_export.tsv"),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "option_export.tsv")),
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            return pd.read_csv(path, sep='\t')
+    
+    raise FileNotFoundError(f"Options quotes file not found in any of: {possible_paths}. Synthetic data disabled.")
 
 
 # --- MOEX Market Data Fetcher ---

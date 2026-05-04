@@ -9,7 +9,7 @@ def distributional_kelly(
 ) -> float:
     """Monte Carlo Kelly optimization with tail penalty.
     
-    Maximizes expected log wealth: argmax_f E[log(1 + f * R)]
+    Maximizes expected log wealth: argmax_f E[log(1 + f * returns)]
     with optional tail penalty for risk reduction.
     """
     if f_grid is None:
@@ -48,6 +48,25 @@ def _compute_utility(returns: np.ndarray, f: float, penalty: str, confidence: fl
         expected_utility -= 0.01 * gap
     
     return {"expected_utility": float(expected_utility)}
+
+
+def _generate_synthetic_returns(win_rate: float, mean_win: float, mean_loss: float, n: int = 1000) -> np.ndarray:
+    """Generate synthetic returns from Kelly stats for distributional optimization.
+    
+    Simulates a mix of winning and losing returns based on observed statistics.
+    Returns centered on zero with appropriate scale to represent profit/loss fractions.
+    """
+    n_wins = int(n * win_rate)
+    n_losses = n - n_wins
+    
+    # Generate positive returns (wins) and negative returns (losses)
+    # using appropriate scale, centered around mean values
+    win_returns = np.random.lognormal(np.log(mean_win + 1e-9), 0.6, n_wins) if n_wins > 0 else np.array([])
+    loss_returns = -np.random.lognormal(np.log(abs(mean_loss) + 1e-9), 0.6, n_losses) if n_losses > 0 else np.array([])
+    
+    returns = np.concatenate([win_returns, loss_returns])
+    np.random.shuffle(returns)
+    return returns
 
 
 def calibrate_from_trades(trades_df, pnl_column: str = "pnl") -> Dict[str, float]:
