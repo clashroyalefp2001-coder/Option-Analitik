@@ -154,10 +154,16 @@ def run_pipeline(
         return 1
 
     risk_cfg = {**RISK_CONFIG, **(config.get("RISK_CONFIG") or {})}
-    pipeline_mode = config.get("pipeline_mode", "legacy")
+    pipeline_mode = config.get("pipeline_mode")
+    if pipeline_mode not in {"forecast", "legacy"}:
+        raise ValueError(
+            f"Invalid pipeline_mode: {pipeline_mode!r}. "
+            f"Must be one of: 'forecast', 'legacy'. "
+            f"Config path: {config_path}"
+        )
 
     if pipeline_mode == "forecast":
-        log.info("--- Switching to FORCAST pipeline mode ---")
+        log.info("--- Switching to FORECAST pipeline mode ---")
         from pipelines.forecast_pipeline import ForecastPipeline
         pipeline = ForecastPipeline()
         res = pipeline.run(config)

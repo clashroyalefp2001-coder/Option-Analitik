@@ -14,6 +14,49 @@ class PipelineResult:
     message: str
     metrics: Dict[str, Any]
 
+def update_kelly_stats_from_oos_trades(trades: list, store_path: str = "storage/kelly_stats.json") -> None:
+    """Update Kelly stats from OOS trades only (past closed trades)."""
+    from datetime import datetime
+    
+    if not trades:
+        return
+    
+    import numpy as np
+    
+    executed_trades = [t for t in trades if t.get("is_executed", False)]
+    if not executed_trades:
+        return
+    
+    pnls = [t.get("pnl", 0) for t in executed_trades]
+    pnl_array = np.array(pnls)
+    
+    wins = pnl_array[pnl_array > 0]
+    losses = pnl_array[pnl_array < 0]
+    
+    win_rate = len(wins) / len(pnls) if len(pnls) > 0 else 0.5
+    median_win = float(np.median(wins)) if len(wins) > 0 else 0.0
+    median_loss = float(np.median(np.abs(losses))) if len(losses) > 0 else 0.0
+    
+    var_95 = float(np.percentile(pnl_array, 5)) if len(pnl_array) > 0 else 0.0
+    tail_losses = pnl_array[pnl_array <= var_95]
+    cvar_95 = float(tail_losses.mean()) if len(tail_losses) > 0 else 0.0
+    
+    from options_alpha.storage.kelly_stats_store import KellyStatsStore
+    store = KellyStatsStore(storage_path=store_path)
+    
+    stats = {
+        "updated_at": datetime.now().isoformat(),
+        "sample_size": len(executed_trades),
+        "win_rate": win_rate,
+        "median_win": median_win,
+        "median_loss": median_loss,
+        "cvar_95": cvar_95,
+        "pnl_distribution": pnls[-1000:]
+    }
+    
+    store.save(stats)
+
+
 class ForecastPipeline:
     def __init__(self):
         self.log = logging.getLogger("forecast_pipeline")
